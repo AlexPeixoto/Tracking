@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import re
 
-from .base import Metadata, Provider, ProviderError, Query, ScoreEntry, Setting, cached_json, session, similarity
+from .base import (
+    Candidate, Metadata, Provider, ProviderError, Query, ScoreEntry, Setting, cached_json, session,
+    similarity,
+)
 
 OMDB_URL = "https://www.omdbapi.com/"
 SUGGEST_URL = "https://v3.sg.media-imdb.com/suggestion/x/{q}.json"
@@ -125,9 +128,39 @@ def lookup(q: Query) -> Metadata | None:
     return _search(q.title, q.year, q.setting("omdb_key"), "series" if q.category == "tv" else "movie")
 
 
+def _suggest(title: str) -> list[dict]:
+    q = re.sub(r"[^\w ]+", "", title.lower()).strip().replace(" ", "_")
+    if not q:
+        return []
+
+    def fetch():
+        r = session().get(SUGGEST_URL.format(q=q), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    return cached_json("imdb-suggest", q, 30, fetch).get("d") or []
+
+
+def _thumb(url: str | None) -> str | None:
+    """IMDb image URLs take a size suffix: ask for a small one for search results."""
+    return url.replace("._V1_.", "._V1_UX140_.") if url and "._V1_." in url else url
+
+
+def search(q: Query) -> list[Candidate]:
+    kind = "series" if q.category == "tv" else "movie"
+    kinds = _SUGGEST_KINDS[kind]
+    labels = {"movie": "Movie", "tvMovie": "TV movie", "video": "Video",
+              "tvSeries": "TV series", "tvMiniSeries": "Mini-series"}
+    return [Candidate(r.get("l") or "?", r.get("y"),
+                      " · ".join(x for x in (labels.get(r.get("qid"), ""), r.get("s") or "") if x),
+                      _thumb((r.get("i") or {}).get("imageUrl")),
+                      f"https://www.imdb.com/title/{r['id']}/")
+            for r in _suggest(q.title) if r.get("qid") in kinds and r.get("id")]
+
+
 # Not "required": without a key it still finds posters and IMDb links.
 PROVIDER = Provider(
-    "omdb", "IMDb / OMDb", frozenset({"movie", "tv"}), lookup,
+    "omdb", "IMDb / OMDb", frozenset({"movie", "tv"}), lookup, search=search,
     settings=(Setting("omdb_key", "OMDb API key",
                       "IMDb rating, plus Rotten Tomatoes and Metacritic for movies. Free: "
                       "omdbapi.com/apikey.aspx. Without it you still get IMDb posters and links."),),

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from rapidfuzz import fuzz
@@ -20,13 +21,29 @@ EXTRA_DIRS = {
     "extras", "extra", "bonus", "bonuses", "nc", "ncop", "nced", "ncop & nced", "creditless",
     "menu", "menus", "trailers", "trailer", "pv", "cm", "cms", "previews", "sample", "samples",
     "featurettes", "behind the scenes", "deleted scenes", "interviews", "scans", "fonts",
-    "subs", "subtitles", "ost", "soundtrack", "other", "others",
+    "subs", "subtitles", "ost", "soundtrack", "other", "others", "goodies", "ncoped", "nc op ed",
+    "nc op & ed", "ncop-ed", "creditless op & ed", "amv", "amvs", "openings", "endings",
 }
+
+# "NCOP", "NCED2", "AMV1", "OPV3", "PV", "ED 01", "ED Episode 08", "Menu": not episodes.
+_EXTRA_FILE = re.compile(
+    r"(?i)(?:^|[\s_\-\]])(?:nc\s?(?:op|ed)\w*|ncoped|amv\d*|(?:op|ed)v\d*|pv\d*|menu\d*|teaser\d*|"
+    r"creditless\b.*)$|^(?:op|ed)(?:\s*(?:episode|ep\.?)?\s*\d+)?$")
+
+
+def is_extra_file(name: str) -> bool:
+    stem = titles.strip_ext(name.rsplit("/", 1)[-1])
+    return bool(_EXTRA_FILE.search(re.sub(r"\s*[\[(][^\])]*[\])]\s*", " ", stem).strip()))
 
 
 def is_extra_path(inner_rel: str) -> bool:
     parts = inner_rel.lower().split("/")[:-1]
-    return any(p in EXTRA_DIRS or p.startswith(("nc ", "extras", "bonus")) for p in parts)
+    return (any(is_extra_dir(p) for p in parts) or is_extra_file(inner_rel))
+
+
+def is_extra_dir(name: str) -> bool:
+    n = name.lower()
+    return n in EXTRA_DIRS or n.startswith(("nc ", "extras", "bonus"))
 
 
 @dataclass
@@ -53,11 +70,18 @@ class _Group:
 def _video_info(inner_rel: str) -> titles.VideoInfo:
     name = inner_rel.rsplit("/", 1)[-1]
     info = titles.parse_video(name)
+    parent = inner_rel.rsplit("/", 2)[-2] if "/" in inner_rel else ""
     if info.season is None:
-        parent = inner_rel.rsplit("/", 2)[-2] if "/" in inner_rel else ""
         season = titles.season_from_dir(parent) if parent else None
         if season is not None:
             info = titles.VideoInfo(info.title, info.year, season, info.episode, "series")
+    if titles.is_weak_title(info.title) and parent and titles.season_from_dir(parent) is None:
+        # "S01E01-Enrollment.mkv" inside "Mahouka Koukou no Rettousei S01 ...": the
+        # sub-folder names the show. (No parent: the caller uses the item folder.)
+        folder = titles.parse_video(titles.strip_order_prefix(parent))
+        if not titles.is_weak_title(folder.title):
+            info = titles.VideoInfo(folder.title, info.year or folder.year,
+                                    info.season or folder.season, info.episode, info.kind)
     return info
 
 

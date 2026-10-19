@@ -260,3 +260,133 @@ def test_tv_shows_folder(tmp_path: Path):
         "Severance Season 2": ("tv", 2, 2),
         "The Bear Season 3": ("tv", 3, 1),
     }
+
+
+def test_numbered_season_folders_keep_their_names(tmp_path: Path):
+    """Batch releases number their folders: "14 - Owarimonogatari S2" must be
+    Owarimonogatari (season 2), not a show called "14"."""
+    base = "tpex/anime/Monogatari Series (BD 1080p)"
+    for folder, files in {
+        "01 - Bakemonogatari": [f"[Grp] Bakemonogatari - {e:02d} [BD 1080p].mkv" for e in (1, 2)],
+        "05 - Nisemonogatari": [f"[Grp] Nisemonogatari - {e:02d} [BD 1080p].mkv" for e in (1, 2)],
+        "09 - Monogatari Series Second Season": ["01.mkv", "02.mkv"],   # titles only in folder
+        "12 - Hanamonogatari": ["[Grp] Hanamonogatari - 01 [BD 1080p].mkv"],
+        "14 - Owarimonogatari S2": [f"[Grp] Owarimonogatari S2 - {e:02d} [BD 1080p].mkv" for e in (1, 2)],
+    }.items():
+        for f in files:
+            touch(tmp_path, f"{base}/{folder}/{f}")
+    items = {i.title: i for i in scan.collect(str(tmp_path), "", Hints())}
+    assert "Owarimonogatari Season 2" in items
+    assert {"Bakemonogatari", "Nisemonogatari", "Hanamonogatari"} <= set(items)
+    assert any(t.startswith("Monogatari Series Second Season") for t in items)
+    assert not any(t.strip().isdigit() for t in items), sorted(items)
+    assert all(i.category == "anime" for i in items.values())
+
+
+def test_order_prefix_only_on_folders():
+    from tracking import titles
+
+    assert titles.strip_order_prefix("14 - Owarimonogatari S2") == "Owarimonogatari S2"
+    assert titles.strip_order_prefix("03. Kizumonogatari") == "Kizumonogatari"
+    for keep in ("1917", "24", "2001 A Space Odyssey", "007 Spectre"):
+        assert titles.strip_order_prefix(keep) == keep
+    assert titles.is_weak_title("14") and not titles.is_weak_title("Heat")
+
+
+def test_number_only_files_take_the_folder_name(tmp_path: Path):
+    for e in (1, 2, 3):
+        touch(tmp_path, f"Anime/Mushishi/{e:02d}.mkv")
+    touch(tmp_path, "Anime/Mushishi/Extras/01.mkv")  # not an episode
+    items = items_by_title(tmp_path)
+    assert list(items) == ["Mushishi"]
+    assert items["Mushishi"].kind == "series" and len(items["Mushishi"].videos) == 3
+
+
+def test_rescan_refetches_items_whose_detection_changed(tmp_path: Path, conn):
+    lib = tmp_path / "lib"
+    touch(lib, "Anime/Kill la Kill/[HorribleSubs] Kill la Kill - 01 [1080p].mkv")
+    touch(lib, "Anime/Mushishi/[Grp] Mushishi - 01.mkv")
+    rid = scan.add_root(conn, str(lib))
+    scan.scan_root(conn, rid)
+    conn.execute("UPDATE items SET enriched_at='2026-01-01'")
+    # Pretend an older scanner had misread one folder.
+    conn.execute("UPDATE items SET title='14' WHERE title='Mushishi'")
+    scan.scan_root(conn, rid)
+    pending = {r[0] for r in conn.execute("SELECT title FROM items WHERE enriched_at IS NULL")}
+    assert pending == {"Mushishi"}            # renamed back, and queued for a new lookup
+
+
+def test_rescan_drops_items_left_over_from_old_grouping(tmp_path: Path, conn):
+    lib = tmp_path / "lib"
+    for e in (1, 2):
+        touch(lib, f"Anime/Mushishi/{e:02d}.mkv")
+    rid = scan.add_root(conn, str(lib))
+    scan.scan_root(conn, rid)
+    # What an older scanner produced: two fake movie items inside the folder.
+    vol, show = conn.execute("SELECT volume_uid, rel_path FROM items").fetchone()
+    for n in ("01", "02"):
+        conn.execute("INSERT INTO items(root_id, volume_uid, rel_path, is_dir, category, title) "
+                     "VALUES(?, ?, ?, 1, 'anime', ?)", (rid, vol, f"{show}::movie-{n}", n))
+    conn.execute("UPDATE items SET completed=1 WHERE title='02'")   # this one has user data
+    res = scan.scan_root(conn, rid)
+    titles = {r[0]: r[1] for r in conn.execute("SELECT title, missing FROM items")}
+    assert titles == {"Mushishi": 0, "02": 1}   # "01" deleted, "02" kept (completed) as missing
+    assert res.missing == 1
+
+
+def test_scene_style_game_names():
+    for name, title in [
+        ("Disgaea.2.Cursed.Memories.USA.PS2.DVD-WaLMaRT", "Disgaea 2 Cursed Memories"),
+        ("Ratchet.and.Clank.PAL.PS2.DVD-RiTUEL", "Ratchet and Clank"),
+        ("Final.Fantasy.X.NTSC.PS2", "Final Fantasy X"),
+        ("Disgaea 2 - Cursed Memories (USA) (En,Ja)", "Disgaea 2 - Cursed Memories"),
+        ("Wii Sports", "Wii Sports"),            # spaced names keep platform words
+        ("Disgaea 2 PC", "Disgaea 2 PC"),
+    ]:
+        assert titles.clean_game_title(name) == title, name
+
+
+def test_collection_pack_folders(tmp_path: Path):
+    """"1a. OVA - B.C. 2033 (1987-91)": order tag, release type and year range are
+    not the title; the pack's sub-folders stay separate items."""
+    pack = "Anime/BUBBLEGUM Crisis (1987-2003) - 2 OVAs, 1 Series - 480p"
+    for folder, name in {
+        "1a. OVA - B.C. 2033 (1987-91)": "Bubblegum CRISIS 2033 - Ep. {:02d} - Title (720p).mkv",
+        "1b. OVA - Bubblegum CRASH (1991)": "Bubblegum CRASH - Ep. {:02d} - Title (480p).mkv",
+        "1c. Series - B.C. TOKYO 2040 (1998-99)": "Bubblegum Crisis (Tokyo 2040) - Ep. {:02d} - Can't Buy a Thrill (480p - DUAL Audio).mkv",
+        "2c. OVA (2003)": "{:02d}.mkv",
+    }.items():
+        for e in (1, 2):
+            touch(tmp_path, f"{pack}/{folder}/{name.format(e)}")
+    items = scan.collect(str(tmp_path), "", Hints())
+    titles_ = sorted(i.title for i in items)
+    assert len(items) == 4, titles_
+    assert not any("Season" in t or t[:2] in ("1a", "1b", "1c", "2c") for t in titles_), titles_
+    assert "Bubblegum CRASH" in titles_
+    assert any(t.startswith("BUBBLEGUM Crisis") for t in titles_)  # "2c. OVA": bare numbers, the pack name
+    assert {i.year for i in items} >= {1987, 1991, 1998}
+
+
+def test_episode_titles_are_not_show_names(tmp_path: Path):
+    """"S01E01-Enrollment.mkv" / "Episode 10 - Before the War.mkv": the show is the folder."""
+    for e in (1, 2, 3):
+        touch(tmp_path, f"Anime/Mahouka Koukou no Rettousei S01 1080p/S01E0{e}-Enrollment Part {e} [AB12CD3{e}].mkv")
+        touch(tmp_path, f"Anime/Aldnoah.Zero (2014) [1080p]/[Prof] Episode {e:02d} - Name {e}.mkv")
+        touch(tmp_path, f"Anime/4 CUT HERO/S01E0{e}.mkv")
+        touch(tmp_path, f"Anime/86 (Eighty Six)/[Judas] 86 - S01E0{e}.mkv")
+    touch(tmp_path, "Anime/86 (Eighty Six)/NC/NCOP1.mkv")
+    touch(tmp_path, "Anime/86 (Eighty Six)/[Judas] 86 - NCED2.mkv")
+    items = items_by_title(tmp_path)
+    assert sorted(items) == ["4 CUT HERO", "86", "Aldnoah Zero", "Mahouka Koukou no Rettousei"], sorted(items)
+    assert all(len(i.videos) == 3 for i in items.values())
+
+
+def test_year_ranges_and_dotted_names():
+    from tracking import titles
+
+    v = titles.parse_video("MS ZETA Gundam (1985-86)")
+    assert (v.title, v.year, v.season, v.episode) == ("MS ZETA Gundam", 1985, None, None)
+    assert titles.parse_video("A.D.P, To Protect and Serve (1999)").title.startswith("A.D.P")
+    assert titles.strip_order_prefix("1a. OVA - Bubblegum CRASH (1991)") == "Bubblegum CRASH (1991)"
+    assert titles.strip_order_prefix("3D Dot Game Heroes") == "3D Dot Game Heroes"
+    assert titles.is_weak_title("1b") and titles.is_weak_title("OVA")

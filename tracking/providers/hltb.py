@@ -18,7 +18,9 @@ def lookup(q: Query) -> Metadata | None:
         from howlongtobeatpy import HowLongToBeat
 
         _limit.wait()
-        results = HowLongToBeat().search(q.title, similarity_case_sensitive=False) or []
+        results = HowLongToBeat().search(q.title, similarity_case_sensitive=False)
+        if results is None:  # the library's way of saying the request failed: don't cache that
+            raise ProviderError("HowLongToBeat didn't answer (try Update metadata again later)")
         return [
             {"name": r.game_name, "main": r.main_story, "extra": r.main_extra,
              "complete": r.completionist, "image": r.game_image_url, "url": r.game_web_link,
@@ -28,7 +30,10 @@ def lookup(q: Query) -> Metadata | None:
         ]
 
     try:
-        results = cached_json("hltb2", q.title.lower(), 30, fetch)
+        # "hltb3": older caches stored failed requests as "no results"
+        results = cached_json("hltb3", q.title.lower(), 30, fetch)
+    except ProviderError:
+        raise
     except Exception as e:
         raise ProviderError(f"HowLongToBeat lookup failed: {e}") from e
     want = platforms.service_name(q.platform, "hltb")

@@ -8,7 +8,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Callable
 
-from .. import db, volumes
+from .. import db, paths, titles, volumes
 from .merge import collect
 from .model import FoundItem, ScanResult, VolumeOffline, fs_path
 from .walk import root_hints
@@ -37,8 +37,15 @@ def add_root(conn: sqlite3.Connection, path: str, category: str = "auto",
     ).fetchone()["id"]
 
 
+ACCOUNT_PREFIX = "steam:"  # volume uid of an online account (sources/steam.py)
+
+
 def mount_for(conn: sqlite3.Connection, volume_uid: str,
               known: list[volumes.Volume] | None = None) -> str | None:
+    """Where the volume is mounted now, or None if it isn't connected. An online
+    account is always reachable; its "mount" is its uid."""
+    if volume_uid.startswith(ACCOUNT_PREFIX):
+        return volume_uid
     row = conn.execute("SELECT serial FROM volumes WHERE uid=?", (volume_uid,)).fetchone()
     vol = volumes.resolve(volume_uid, row["serial"] if row else None, known)
     if vol:
@@ -55,6 +62,9 @@ def scan_root(conn: sqlite3.Connection, root_id: int,
     deleted); with ``missing_completed`` they are also marked as completed, on the
     idea that you delete things once you've watched / finished them."""
     root = conn.execute("SELECT * FROM roots WHERE id=?", (root_id,)).fetchone()
+    if root["volume_uid"].startswith(ACCOUNT_PREFIX):
+        from ..sources import steam
+        return steam.sync(conn, root_id, progress=progress, cancelled=cancelled)
     mount = mount_for(conn, root["volume_uid"])
     if not mount:
         raise VolumeOffline(root["volume_uid"])
@@ -77,6 +87,7 @@ def scan_root(conn: sqlite3.Connection, root_id: int,
         prev = {r["rel_path"]: r["id"] for r in conn.execute(
             "SELECT id, rel_path FROM items WHERE root_id=?", (root_id,))}
         gone = [prev[g] for g in set(prev) - set(seen)]
+        gone = _drop_regrouped(conn, gone, seen)
         result.missing = len(gone)
         conn.executemany("UPDATE items SET missing=1 WHERE id=?", [(i,) for i in gone])
         if missing_completed:
@@ -87,11 +98,61 @@ def scan_root(conn: sqlite3.Connection, root_id: int,
     return result
 
 
+def _drop_regrouped(conn: sqlite3.Connection, gone: list[int], seen: list[str]) -> list[int]:
+    """Items that vanished only because the same files are now grouped differently
+    (an older scan split "Show/01.mkv, 02.mkv" into items "01" and "02"; now they're
+    one "Show") are deleted instead of lingering as "missing" - unless they carry
+    something of the user's (completed, notes, edits). Returns the truly gone ids."""
+    seen_dirs = {fs_path(p) for p in seen}
+    seen_dirs |= {d.rsplit("/", 1)[0] for d in seen_dirs if "/" in d}
+    keep = []
+    for item_id in gone:
+        r = conn.execute("SELECT rel_path, poster, completed, notes, user_title, user_category, "
+                         "user_platform FROM items WHERE id=?", (item_id,)).fetchone()
+        folder = fs_path(r["rel_path"])
+        regrouped = folder in seen_dirs or folder.rsplit("/", 1)[0] in seen_dirs
+        mine = r["completed"] or r["notes"] or r["user_title"] or r["user_category"] or r["user_platform"]
+        if regrouped and not mine and _files_exist(conn, item_id):
+            log.info("dropping %s: its files now belong to another item", r["rel_path"])
+            if r["poster"]:
+                (paths.posters_dir() / r["poster"]).unlink(missing_ok=True)
+            conn.execute("DELETE FROM items WHERE id=?", (item_id,))
+        else:
+            keep.append(item_id)
+    return keep
+
+
+def _files_exist(conn: sqlite3.Connection, item_id: int) -> bool:
+    """Its files are still on disk (so it was regrouped, not deleted)."""
+    r = conn.execute("SELECT i.volume_uid, i.rel_path FROM items i WHERE i.id=?", (item_id,)).fetchone()
+    mount = mount_for(conn, r["volume_uid"])
+    return bool(mount) and os.path.exists(volumes.join(mount, fs_path(r["rel_path"])))
+
+
+def _claim_wanted(conn: sqlite3.Connection, volume_uid: str, f: FoundItem):
+    """A newly found item that's on the "Want to acquire" list (or was marked "Got it")
+    takes over that entry - notes, edits and fetched metadata included - instead
+    of appearing twice. Matched on section + title; the platform isn't required to
+    match, since a wish-list entry usually has none."""
+    key = titles.normalize(f.title)
+    for cand in conn.execute(
+            "SELECT id, COALESCE(user_title, title) t FROM items WHERE source IN (?, 'manual') "
+            "AND COALESCE(user_category, category)=?", (db.WANTED, f.category)).fetchall():
+        if titles.normalize(cand["t"]) == key:
+            log.info("found %r on disk: moved from the Want to acquire list", f.title)
+            conn.execute("UPDATE items SET volume_uid=?, rel_path=?, source='disk' WHERE id=?",
+                         (volume_uid, f.rel_path, cand["id"]))
+            return cand
+    return None
+
+
 def _upsert(conn: sqlite3.Connection, root_id: int, volume_uid: str, f: FoundItem, now: str,
             found_paths: set[str] = frozenset()) -> int:
     row = conn.execute(
         "SELECT id FROM items WHERE volume_uid=? AND rel_path=?", (volume_uid, f.rel_path)
     ).fetchone()
+    if not row:
+        row = _claim_wanted(conn, volume_uid, f)
     if not row:
         # Moved to another drive / folder? Re-link the old entry so its completed
         # state, notes and edits follow it instead of creating a duplicate.
@@ -100,7 +161,8 @@ def _upsert(conn: sqlite3.Connection, root_id: int, volume_uid: str, f: FoundIte
         row = None
         for cand in conn.execute(
             "SELECT id, volume_uid, rel_path, missing FROM items WHERE category=? AND title=? "
-            "AND COALESCE(platform, '')=COALESCE(?, '') AND user_category IS NULL",
+            "AND COALESCE(platform, '')=COALESCE(?, '') AND user_category IS NULL "
+            "AND volume_uid NOT LIKE 'steam:%'",
             (f.category, f.title, f.platform),
         ).fetchall():
             mount = None if cand["missing"] else mount_for(conn, cand["volume_uid"])
@@ -117,6 +179,21 @@ def _upsert(conn: sqlite3.Connection, root_id: int, volume_uid: str, f: FoundIte
                          (volume_uid, f.rel_path, row["id"]))
     if row:
         item_id = row["id"]
+        old = conn.execute("SELECT title, category, platform, season, kind, user_title, user_category "
+                           "FROM items WHERE id=?", (item_id,)).fetchone()
+        # The scanner now reads it differently (a parsing fix, a renamed folder): what was
+        # looked up was for the old name, so fetch again - unless the user's own title /
+        # category override decides what we search for anyway.
+        redetected = (old["title"], old["category"], old["platform"], old["season"], old["kind"]) != (
+            f.title, f.category, f.platform, f.season, f.kind)
+        if redetected and not (old["user_title"] or old["user_category"]):
+            log.info("re-detected %r as %r (%s): metadata will be fetched again",
+                     old["title"], f.title, f.category)
+            conn.execute("UPDATE items SET enriched_at=NULL, poster=NULL, rating=NULL, "
+                         "rating_max=NULL, rating_source=NULL, summary=NULL, external_url=NULL "
+                         "WHERE id=?", (item_id,))
+            conn.execute("DELETE FROM scores WHERE item_id=?", (item_id,))
+            conn.execute("DELETE FROM episodes WHERE item_id=?", (item_id,))
         conn.execute(
             "UPDATE items SET root_id=?, is_dir=?, category=?, platform=?, title=?, year=?, "
             "file_count=?, size_bytes=?, kind=?, season=?, detected_how=?, missing=0, scanned_at=? "

@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 
 from .base import (
-    Episode, Metadata, Provider, Query, RateLimiter, ScoreEntry, best_match, cached_json, session,
-    year_of,
+    Candidate, Episode, Metadata, Provider, Query, RateLimiter, ScoreEntry, best_match, cached_json,
+    session, year_of,
 )
 
 SEARCH_URL = "https://api.tvmaze.com/search/shows"
@@ -15,14 +15,18 @@ EPISODES_URL = "https://api.tvmaze.com/shows/{id}/episodes"
 _limit = RateLimiter(0.6)
 
 
-def _search(title: str, year: int | None) -> Metadata | None:
+def _shows(title: str) -> list[dict]:
     def fetch():
         _limit.wait()
         r = session().get(SEARCH_URL, params={"q": title}, timeout=20)
         r.raise_for_status()
         return r.json()
 
-    shows = [r.get("show") or {} for r in cached_json("tvmaze", title.lower(), 14, fetch)]
+    return [r.get("show") or {} for r in cached_json("tvmaze", title.lower(), 14, fetch)]
+
+
+def _search(title: str, year: int | None) -> Metadata | None:
+    shows = _shows(title)
     best = best_match(title, year, shows, names=lambda s: [s.get("name")],
                       cand_year=lambda s: year_of(s.get("premiered")),
                       bonus=lambda s: 2 if s.get("type") == "Scripted" else 0)
@@ -65,4 +69,15 @@ def episodes(q: Query, show_id: str) -> list[Episode]:
     return out
 
 
-PROVIDER = Provider("tvmaze", "TVmaze", frozenset({"tv"}), lookup, cover_rank=20, episodes=episodes)
+def search(q: Query) -> list[Candidate]:
+    out = []
+    for s in _shows(q.title):
+        network = (s.get("network") or s.get("webChannel") or {}).get("name") or ""
+        out.append(Candidate(s.get("name") or "?", year_of(s.get("premiered")),
+                             " · ".join(x for x in ("TV series", network, s.get("status") or "") if x),
+                             (s.get("image") or {}).get("medium"), s.get("url")))
+    return out
+
+
+PROVIDER = Provider("tvmaze", "TVmaze", frozenset({"tv"}), lookup, cover_rank=20, episodes=episodes,
+                    search=search)

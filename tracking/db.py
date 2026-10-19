@@ -9,6 +9,7 @@ Each thread should open its own connection with :func:`connect`.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -18,6 +19,8 @@ from pathlib import Path
 from typing import Iterator
 
 from . import categories, paths, scores as score_math
+
+log = logging.getLogger(__name__)
 
 CATEGORIES = categories.KEYS
 UNKNOWN_PLATFORM = "Unknown"
@@ -58,6 +61,12 @@ CREATE TABLE IF NOT EXISTS items (
     kind           TEXT,           -- 'series' | 'movie' for video items
     season         INTEGER,
     detected_how   TEXT,           -- why the scanner chose this category / platform
+    -- Where the item comes from: 'disk' (scanned files), 'steam' (a Steam account),
+    -- 'wish' (on the "Want to acquire" list), 'manual' (marked as acquired by hand).
+    source         TEXT NOT NULL DEFAULT 'disk',
+    steam_appid    INTEGER,        -- known for Steam games: exact store / artwork lookups
+    playtime_min   REAL,           -- Steam: minutes played
+    last_played    TEXT,
     file_count     INTEGER NOT NULL DEFAULT 0,
     size_bytes     INTEGER NOT NULL DEFAULT 0,
     duration_sec   REAL,           -- anime / movie: sum of all video files
@@ -122,6 +131,23 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- The "Completed" log: one row per time you finished something. Marking an item
+-- completed adds one (dated that day); year CSVs and manual entries add rows that
+-- need not be in the library at all (item_id NULL, own cover).
+CREATE TABLE IF NOT EXISTS completions (
+    id           INTEGER PRIMARY KEY,
+    item_id      INTEGER REFERENCES items(id) ON DELETE SET NULL,
+    title        TEXT NOT NULL,
+    category     TEXT NOT NULL DEFAULT 'game',
+    platform     TEXT,
+    completed_on TEXT NOT NULL,          -- 'YYYY-MM-DD', or just 'YYYY' when the day is unknown
+    position     INTEGER,                -- your order within the year (image order); NULL = by date
+    poster       TEXT,                   -- own cover file (entries not in the library)
+    notes        TEXT,
+    added_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS completions_year ON completions(substr(completed_on, 1, 4));
 """
 
 
@@ -132,6 +158,10 @@ MIGRATIONS = [
     ("items", "detected_how", "TEXT"),
     ("media_files", "season", "INTEGER"),
     ("media_files", "episode", "INTEGER"),
+    ("items", "source", "TEXT NOT NULL DEFAULT 'disk'"),
+    ("items", "steam_appid", "INTEGER"),
+    ("items", "playtime_min", "REAL"),
+    ("items", "last_played", "TEXT"),
 ]
 
 
@@ -140,6 +170,23 @@ def _migrate(conn: sqlite3.Connection) -> None:
         cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    conn.commit()
+
+
+def _seed_completions(conn: sqlite3.Connection) -> None:
+    """Once per library: items already marked completed start the Completed log."""
+    if conn.execute("SELECT 1 FROM settings WHERE key='completions_seeded'").fetchone():
+        return
+    try:
+        conn.execute(
+            "INSERT INTO completions(item_id, title, category, platform, completed_on) "
+            "SELECT id, COALESCE(user_title, title), COALESCE(user_category, category), "
+            "COALESCE(user_platform, platform), substr(COALESCE(completed_at, datetime('now')), 1, 10) "
+            "FROM items WHERE completed=1 AND source != 'wish'")
+    except sqlite3.OperationalError as e:  # a pre-1.0 items table without those columns
+        log.debug("no completions to seed: %s", e)
+        return
+    conn.execute("INSERT INTO settings(key, value) VALUES('completions_seeded', '1')")
     conn.commit()
 
 
@@ -161,6 +208,7 @@ def connect(db_file: Path | None = None) -> sqlite3.Connection:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
             _migrate(conn)
+            _seed_completions(conn)
             _ready.add(key)
     return conn
 
@@ -214,6 +262,10 @@ class Item:
     kind: str | None
     season: int | None
     detected_how: str | None
+    source: str
+    steam_appid: int | None
+    playtime_min: float | None
+    last_played: str | None
     rating: float | None
     rating_max: float | None
     rating_source: str | None
@@ -250,6 +302,7 @@ SELECT id, volume_uid, rel_path, is_dir,
        title AS detected_title,
        year, file_count, size_bytes, duration_sec, hltb_hours, hltb_extra, hltb_complete,
        completed, completed_at, notes, kind, season, detected_how,
+       source, steam_appid, playtime_min, last_played,
        rating, rating_max, rating_source, external_url, poster, summary, missing,
        (SELECT COUNT(*) FROM media_files m WHERE m.item_id = items.id) AS video_count
 FROM items
@@ -278,6 +331,10 @@ def row_to_item(row: sqlite3.Row) -> Item:
         kind=row["kind"],
         season=row["season"],
         detected_how=row["detected_how"],
+        source=row["source"],
+        steam_appid=row["steam_appid"],
+        playtime_min=row["playtime_min"],
+        last_played=row["last_played"],
         rating=row["rating"],
         rating_max=row["rating_max"],
         rating_source=row["rating_source"],
@@ -378,16 +435,34 @@ def set_completed(conn: sqlite3.Connection, item_ids: list[int], done: bool) -> 
     )
 
 
-def category_counts(conn: sqlite3.Connection) -> dict[str, int]:
+WANTED = "wish"  # items.source of "Want to acquire" entries
+STEAM = "steam"  # items.source of games from a Steam account: their own section
+OWN_SECTION = (WANTED, STEAM)  # sources shown in their own sidebar section, not the library
+
+
+def in_library(source: str) -> bool:
+    """Counted in the library sections (Anime, Games...), not a section of its own."""
+    return source not in OWN_SECTION
+
+
+def category_counts(conn: sqlite3.Connection, wanted: bool = False) -> dict[str, int]:
+    """Items per section: the library (default) or the "Want to acquire" list."""
+    if wanted:
+        where, args = "source = ?", (WANTED,)
+    else:
+        where, args = "source NOT IN (?, ?)", OWN_SECTION
     rows = conn.execute(
-        f"SELECT category, COUNT(*) n FROM ({ITEM_SELECT}) GROUP BY category"
-    )
+        f"SELECT category, COUNT(*) n FROM ({ITEM_SELECT}) WHERE {where} GROUP BY category", args)
     return {r["category"]: r["n"] for r in rows}
+
+
+def source_count(conn: sqlite3.Connection, source: str) -> int:
+    return conn.execute("SELECT COUNT(*) n FROM items WHERE source=?", (source,)).fetchone()["n"]
 
 
 def platform_counts(conn: sqlite3.Connection) -> dict[str, int]:
     rows = conn.execute(
         f"SELECT COALESCE(platform, '{UNKNOWN_PLATFORM}') p,COUNT(*) n FROM ({ITEM_SELECT}) "
-        "WHERE category='game' GROUP BY p ORDER BY p"
+        "WHERE category='game' AND source NOT IN (?, ?) GROUP BY p ORDER BY p", OWN_SECTION
     )
     return {r["p"]: r["n"] for r in rows}

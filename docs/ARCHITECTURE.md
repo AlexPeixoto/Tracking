@@ -16,6 +16,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `db.py` | Schema, migrations, `Item` / `Score` / `EpisodeRow` and the read queries |
 | `library.py` | Changes the *user* makes (edit, move, remove, complete). The UI calls these; it never writes SQL |
 | `archive.py` | Export / import of the library as a zip (replace or merge) |
+| `completions.py` | The Completed log: one row per time you finished something (marking an item completed adds today; year CSVs `name, DD/MM/YYYY` and manual entries add rows outside the library, with their own cover). Editing, ordering, CSV import/export |
 | `volumes.py` | Drive identity: volume GUID + serial, UNC shares, Linux UUIDs; resolves where a drive is mounted now |
 | **Tables** | |
 | `categories.py` | The sections (Anime, Movies, TV Shows, Games, Unknown): label, colours, "Watched/Beaten", episodic? has platform? |
@@ -25,20 +26,25 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | **Scanning** `scan/` | |
 | `scan/walk.py` | Walks a location: container rules, folder items, loose files |
 | `scan/classify.py` | Category / platform decisions: folder names, ROM extensions, disc headers, release tags, serials |
-| `scan/videos.py` | Episodes vs movies, one group per series season, extras skipped |
+| `scan/discid.py` | A disc's own identity, read like an emulator does (also inside .zip): SYSTEM.CNF serial for PS1/PS2 (named via PCSX2's GameIndex), PARAM.SFO for PSP/PS3, Wii/GameCube headers. Used only when the name or platform says too little |
+| `scan/videos.py` | Episodes vs movies, one group per series season, extras (NC / AMV / PV folders and files) skipped |
 | `scan/merge.py` | One item per series season, per game (updates/DLC folded in), per movie (copies folded in) |
 | `scan/store.py` | Saving: upsert, missing items, re-linking moved items, mark-missing-as-completed |
 | `duration.py` | Video runtime from file headers (MediaInfo) |
+| **Accounts** `sources/` | |
+| `sources/steam.py` | A Steam account as a location (volume `steam:<SteamID64>`, always online): resolves a profile name / URL via the public profile XML, reads owned games + play time with the Web API key (`steam_api_key`), syncs them on Rescan as `source='steam'` items, which have their own sidebar section ("Steam") outside the library counts, copies play time onto a disk PC copy of the same game, and optionally imports the wish list into "Want to acquire" |
 | **Metadata** | |
 | `enrich.py` | Runs the registered services for an item, merges results, saves scores / cover / episodes |
 | `providers/__init__.py` | The registry: which services exist and their priority |
 | `providers/base.py` | `Query`, `Provider`, `Metadata`, `Episode`, HTTP session, cache, rate limiter, fuzzy matching |
 | `providers/<service>.py` | One module per service (anidb, mal, anilist, kitsu, omdb, tmdb, tvmaze, trakt, rawg, igdb, hltb, opencritic, steam) |
 | **UI** `ui/` | |
-| `ui/main_window.py` | Sidebar, grid, job queue, toolbar |
+| `ui/main_window.py` | Sidebar (library sections, Steam, Want to acquire), grid, job queue, toolbar |
 | `ui/grid.py` | Poster cards (score chips, average, badges) |
 | `ui/item_page.py` | Item page: completion, scores, time, episodes, summary, edits |
-| `ui/dialogs/` | `locations.py` (add / manage / rescan), `settings.py` (keys, export/import), `log_viewer.py` |
+| `ui/completed_page.py` | Completed section: a year's covers (drag to reorder), add / edit / remove, CSV import / export |
+| `ui/year_image.py` | "Export year as image": the year's covers as one grid picture (columns, cover size / shape, gap, margin, background, heading, labels), drawn with Qt |
+| `ui/dialogs/` | `locations.py` (add / manage / rescan, add Steam account), `settings.py` (keys, export/import), `log_viewer.py` |
 | `ui/workers.py` | Background jobs (scan, enrich) on a thread pool, each with its own DB connection |
 | `ui/theme.py` | Dark theme, colours, app icon |
 | `packaging/` | PyInstaller spec, entry script, icon renderer (used by `build.ps1`) |
@@ -84,4 +90,4 @@ Add the column to `SCHEMA` in `db.py` **and** to `MIGRATIONS` so existing librar
 
 ## Tests
 
-`pytest` (no network needed): scanner rules on synthetic folder trees, real-world release names, archive export/import, library operations, episode parsers with recorded responses, job queue and window close, and consistency checks between the tables.
+`pytest` (no network needed): scanner rules on synthetic folder trees, real-world release names, archive export/import, library operations, episode parsers with recorded responses, Steam account import with mocked HTTP, job queue and window close, and consistency checks between the tables.

@@ -16,10 +16,12 @@ import os
 from typing import Callable, Iterator
 
 from .. import titles
-from . import classify
+from . import classify, discid
 from .classify import ARCHIVE_EXT, DISC_EXT, ROM_EXT, VIDEO_EXT, Hints
 from .model import GROUP_SEP, FileEntry, FoundItem, vol_rel
-from .videos import EXTRA_DIRS, display_title, group_videos, is_extra_path, season_tag
+from .videos import (
+    EXTRA_DIRS, display_title, group_videos, is_extra_dir, is_extra_file, is_extra_path, season_tag,
+)
 
 log = logging.getLogger(__name__)
 
@@ -101,14 +103,17 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
         return []
     if d.category == "game":
         addon = _is_addon(name)
+        name = titles.strip_order_prefix(name)
         title = titles.addon_base_title(name) if addon else titles.clean_game_title(name)
-        item = FoundItem(dir_rel, True, "game", d.platform, title, None,
-                         [], count, total, kind="addon" if addon else None, reason=d.reason)
+        platform, title, reason = _ask_disc(d.platform, title, d.reason,
+                                            [p for _, p in pairs], addon)
+        item = FoundItem(dir_rel, True, "game", platform, title, None,
+                         [], count, total, kind="addon" if addon else None, reason=reason)
         log.debug("game %r [%s] <- %s (%s)", item.title, d.platform or "?", dir_rel, d.reason)
         return [item] + extra
 
     groups = group_videos(videos)
-    folder = titles.parse_video(name)
+    folder = titles.parse_video(titles.strip_order_prefix(name))
     if len(groups) <= 1:
         g = groups[0] if groups else None
         kind = g.kind if g else folder.kind
@@ -116,7 +121,18 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
         if folder.season and kind == "series":
             season = folder.season
         # A folder called "Season 2" says nothing about the show's name.
-        base = g.title if (g and titles.season_from_dir(name) is not None) else folder.title
+        # A folder called "Season 2" (or one that still parses to just a number)
+        # says nothing about the show's name: use what the video files say.
+        weak = titles.season_from_dir(name) is not None or titles.is_weak_title(folder.title)
+        # "1a. MSG 0079" in a collection pack: abbreviated; its files say "Mobile Suit GUNDAM 0079".
+        in_pack = titles.strip_order_prefix(name) != name
+        use_files = g and not titles.is_weak_title(g.title) and (
+            weak or (in_pack and len(g.title) > len(folder.title)))
+        base = g.title if use_files else folder.title
+        if g and titles.normalize(g.title) and titles.normalize(g.title) == titles.normalize(folder.title):
+            base = folder.title  # "86 (Eighty Six)/[Judas] 86 - S01E01.mkv": "86" really is the name
+        elif titles.is_weak_title(base):  # "4b. OVA (2005)" holding "01.mkv": the collection's name
+            base = _folder_title(base, dir_rel)
         item = FoundItem(dir_rel, True, d.category, None, display_title(base, kind, season),
                          folder.year or (g.year if g else None),
                          [e for e, _ in g.files] if g else [], count, total,
@@ -130,8 +146,11 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
     items = []
     for g in groups:
         size = sum(e.size for e, _ in g.files)
+        base = g.title
+        if titles.is_weak_title(base):
+            base = folder.title if not titles.is_weak_title(folder.title) else _folder_title(base, dir_rel)
         item = FoundItem(f"{dir_rel}{GROUP_SEP}{g.slug}", True, d.category, None,
-                         display_title(g.title, g.kind, g.season), g.year,
+                         display_title(base, g.kind, g.season), g.year or folder.year,
                          [e for e, _ in g.files], len(g.files), size,
                          kind=g.kind, season=g.season, reason=d.reason + "; split by season/movie",
                          series_key=g.key if g.kind == "series" else None)
@@ -139,6 +158,44 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
                   season_tag(g.season), len(item.videos), item.rel_path)
         items.append(item)
     return items
+
+
+_NAMELESS = {"copy", "newfolder", "game", "games", "disc", "disc1", "iso", "rom", "backup", "image"}
+
+
+def _ask_disc(platform: str | None, title: str, reason: str, paths: list[str],
+              addon: bool) -> tuple[str | None, str, str]:
+    """When the platform is unknown or the name says nothing ("copy"), read the disc
+    itself (SYSTEM.CNF / PARAM.SFO / Nintendo header) like an emulator would."""
+    weak = titles.is_weak_title(title) or titles.normalize(title) in _NAMELESS
+    if addon or (platform and not weak):
+        return platform, title, reason
+    images = [p for p in paths if p.lower().endswith(discid.IMAGE_EXT + (".zip",))]
+    for path in sorted(images, key=lambda p: -_size(p))[:2]:
+        info = discid.identify(path)
+        if not info:
+            continue
+        if weak and info.title:
+            title = titles.clean_game_title(info.title)
+        platform = platform or info.platform
+        return platform, title, f"{reason}; {info.describe()}"
+    return platform, title, reason
+
+
+def _size(path: str) -> int:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
+def _folder_title(fallback: str, dir_rel: str) -> str:
+    """The nearest folder above ``dir_rel`` with a real name ("1b" / "OVA" don't count)."""
+    for part in reversed(dir_rel.split("/")[:-1]):
+        t = titles.parse_video(titles.strip_order_prefix(part)).title
+        if not titles.is_weak_title(t):
+            return t
+    return fallback
 
 
 def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iterator[FoundItem]:
@@ -158,6 +215,8 @@ def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iter
         except OSError:
             continue
         if ext in VIDEO_EXT:
+            if is_extra_file(e.name):
+                continue
             st = stats[e.name]
             vids.append((FileEntry(vol_rel(dir_rel, e.name), st.st_size, st.st_mtime), e.name))
         else:
@@ -171,8 +230,12 @@ def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iter
         d = classify.decide(hints, sig)
         if not d:
             continue
+        # "01.mkv" files carry no title: the folder they sit in names the show.
+        base = g.title
+        if titles.is_weak_title(base) and dir_rel:
+            base = _folder_title(base, vol_rel(dir_rel, "x"))
         item = FoundItem(vol_rel(dir_rel, names[0]), False, d.category, None,
-                         display_title(g.title, g.kind, g.season), g.year,
+                         display_title(base, g.kind, g.season), g.year,
                          [e for e, _ in g.files], len(g.files), sum(e.size for e, _ in g.files),
                          kind=g.kind, season=g.season, reason=d.reason + "; loose files",
                          series_key=g.key if g.kind == "series" else None)
@@ -196,11 +259,15 @@ def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iter
             continue
         stem = stems[first.name]
         title = titles.addon_base_title(stem) if only_addons else titles.clean_game_title(stem)
+        platform, reason = d.platform, d.reason
+        if d.category == "game":
+            platform, title, reason = _ask_disc(platform, title, reason,
+                                                [m.path for m in members], only_addons)
         log.debug("%s%s %r [%s] <- %s (%s)", d.category, " add-on for" if only_addons else "", title,
-                  d.platform or "?", vol_rel(dir_rel, first.name), d.reason)
-        yield FoundItem(vol_rel(dir_rel, first.name), False, d.category, d.platform, title, None,
+                  platform or "?", vol_rel(dir_rel, first.name), reason)
+        yield FoundItem(vol_rel(dir_rel, first.name), False, d.category, platform, title, None,
                         [], len(members), sum(stats[m.name].st_size for m in members),
-                        kind="addon" if only_addons else None, reason=d.reason)
+                        kind="addon" if only_addons else None, reason=reason)
 
 
 def _has_keyword_child(dir_abs: str) -> bool:
@@ -260,6 +327,9 @@ def walk(dir_abs: str, dir_rel: str, hints: Hints, depth: int = 0,
         if cancelled():
             return
         if not e.is_dir(follow_symlinks=False) or classify.is_skipped(e.name):
+            continue
+        if hints.category != "game" and is_extra_dir(e.name):
+            log.debug("skip %s: extras", vol_rel(dir_rel, e.name))
             continue
         rel = vol_rel(dir_rel, e.name)
         child_hints, is_keyword = hints.child(e.name)

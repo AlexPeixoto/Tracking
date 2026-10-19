@@ -49,6 +49,18 @@ class Metadata:
     hltb_extra: float | None = None
     hltb_complete: float | None = None
     scores: list[ScoreEntry] = field(default_factory=list)
+    cover_first: bool = False            # this cover beats every other service's
+
+
+@dataclass
+class Candidate:
+    """One search result for the "Want to acquire" search box."""
+    title: str
+    year: int | None = None
+    detail: str = ""                     # "Movie", "TV series · 3 seasons", "PC"...
+    image_url: str | None = None
+    url: str | None = None
+    steam_appid: int | None = None
 
 
 @dataclass
@@ -74,6 +86,7 @@ class Query:
     kind: str | None = None          # "series" | "movie" for video, None for games
     platform: str | None = None      # games
     season: int | None = None        # episodic items: which season this item is
+    steam_appid: int | None = None   # known for Steam games: no title search needed
     settings: Mapping[str, str] = field(default_factory=dict)
 
     def setting(self, key: str) -> str:
@@ -110,6 +123,8 @@ class Provider:
     # Optional: list the episodes of the title ``lookup`` found, given its
     # Metadata.external_id. Services earlier in the registry are asked first.
     episodes: "Callable[[Query, str], list[Episode]] | None" = None
+    # Optional: several results for a free-text search ("Want to acquire").
+    search: "Callable[[Query], list[Candidate]] | None" = None
 
     def configured(self, q: Query) -> bool:
         return all(q.setting(k) for k in self.required)
@@ -222,10 +237,17 @@ def similarity(a: str, b: str) -> float:
     Titles whose numbers disagree ("1st GIG" vs "2nd GIG", "Okami" vs "Okami 2")
     are pushed below the match threshold.
     """
-    na, nb = titles.normalize(a), titles.normalize(b)
+    na, nb = titles.normalize(a.replace("&", " and ")), titles.normalize(b.replace("&", " and "))
     if na and na == nb:
         return 100.0
     score = max(fuzz.ratio(na, nb), fuzz.token_sort_ratio(a.lower(), b.lower()))
+    # "Monochrome Mobius" vs "Monochrome Mobius: Rights and Wrongs Forgotten": release
+    # names often drop the subtitle the store keeps (and the other way round).
+    wa, wb = (re.findall(r"[a-z0-9]+", s.lower().replace("&", " and ")) for s in (a, b))
+    short, long_ = sorted((wa, wb), key=len)
+    if (len("".join(short)) >= 10 and long_[:len(short)] == short and len(long_) > len(short)
+            and not re.fullmatch(r"\d+|[ivx]+", long_[len(short)])):  # "Final Fantasy" != "... XV"
+        score = max(score, 82.0)
     if _numbers(a) != _numbers(b):
         score -= 25
     return score

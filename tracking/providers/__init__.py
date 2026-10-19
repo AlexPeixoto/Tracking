@@ -16,7 +16,7 @@ from __future__ import annotations
 from . import (
     anidb, anilist, hltb, igdb, kitsu, mal, omdb, opencritic, rawg, steam, tmdb, trakt, tvmaze,
 )
-from .base import Episode, Metadata, Provider, ProviderError, Query, ScoreEntry, Setting
+from .base import Candidate, Episode, Metadata, Provider, ProviderError, Query, ScoreEntry, Setting
 
 REGISTRY: list[Provider] = [m.PROVIDER for m in (
     anidb, omdb, rawg, tmdb, igdb, anilist, tvmaze, hltb, mal, kitsu, opencritic, trakt, steam,
@@ -43,12 +43,21 @@ def settings_for(category: str) -> list[Setting]:
     return out
 
 
+def search(q: Query, limit: int = 20) -> tuple[str, list[Candidate]]:
+    """Free-text search for the "Want to acquire" box: the first configured service
+    (registry order) for the category that can search. Returns (service, results)."""
+    for p in for_query(q):
+        if p.search and p.configured(q):
+            return p.label, p.search(q)[:limit]
+    return "", []
+
+
 def credential_keys() -> set[str]:
     """Every setting a service declares (keys, secrets, client ids): left out of
     exports unless asked for, kept on import."""
     return {s.key for p in REGISTRY for s in p.settings}
 
 
-__all__ = ["Episode", "Metadata", "Provider", "ProviderError", "Query", "REGISTRY", "ScoreEntry", "Setting",
-           "credential_keys", "settings_for",
+__all__ = ["Candidate", "Episode", "Metadata", "Provider", "ProviderError", "Query", "REGISTRY", "ScoreEntry", "Setting",
+           "credential_keys", "search", "settings_for",
            "for_category", "for_query"]

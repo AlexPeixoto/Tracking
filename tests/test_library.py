@@ -68,3 +68,16 @@ def test_providers_cover_known_categories_and_scores():
     # Every category the classifier can pick has at least one service, except Unknown.
     for c in categories.KEYS:
         assert providers.for_category(c) or c == "unknown", c
+
+
+def test_export_missing_data_list(tmp_path, monkeypatch):
+    import csv
+
+    monkeypatch.setenv("TRACKING_DATA_DIR", str(tmp_path / "data"))
+    with db.session() as conn:
+        a = library.add_wanted(conn, "game", "Afro Samurai")
+        library.acquire(conn, [a])
+        items = [i for i in db.list_items(conn) if library.missing_data(i)]
+        assert library.export_list(conn, items, str(tmp_path / "out.csv")) == 1
+    rows = list(csv.DictReader(open(tmp_path / "out.csv", encoding="utf-8-sig")))
+    assert rows[0]["title"] == "Afro Samurai" and rows[0]["cover"] == "no"

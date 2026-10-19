@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from .. import categories, db, library, platforms
+from .. import categories, db, enrich, library, platforms
 from . import theme
 from .grid import fmt_hours, posters
 
@@ -103,6 +103,7 @@ class ItemPage(QScrollArea):
         refetch = QPushButton("Refetch metadata")
         refetch.clicked.connect(lambda: self.refetch.emit(self.item.id))
         delete = QPushButton("Remove from library")
+        self.delete_btn = delete
         delete.clicked.connect(self._delete)
         for b in (self.open_btn, refetch, delete):
             left.addWidget(b)
@@ -275,6 +276,10 @@ class ItemPage(QScrollArea):
             rows = [("Main story", item.hltb_hours), ("Main + extras", item.hltb_extra),
                     ("Completionist", item.hltb_complete)]
             cells = [(label, f"{h:.1f} h" if h else "—") for label, h in rows]
+            if item.playtime_min is not None:
+                cells.append(("Played (Steam)", f"{item.playtime_min / 60:.1f} h"
+                              if item.playtime_min >= 60 else f"{item.playtime_min:.0f} min"))
+                cells.append(("Last played", item.last_played or "never"))
         else:
             cells = [("Total runtime", fmt_hours(item.total_hours, item.category) or "—")]
             if item.video_count and item.kind != "movie":
@@ -303,6 +308,27 @@ class ItemPage(QScrollArea):
         self.e_year.setValue(item.year or 0)
         self.e_notes.setPlainText(item.notes or "")
 
+        wanted = item.source == db.WANTED
+        self.delete_btn.setText("Remove from list" if wanted else "Remove from library")
+        self.open_btn.setText("Open web page" if wanted or item.source in ("manual", "steam")
+                              else "Open folder")
+        if wanted:
+            self.location.setText("<b>On your Want to acquire list</b><br>Use “Got it” when you have "
+                                  "it, or it moves to your library by itself when a scan finds it.")
+            self.open_btn.setEnabled(bool(item.external_url))
+            return
+        if item.source == "manual":
+            self.location.setText("<b>In your library</b>, no files linked yet<br>A scan that finds "
+                                  "it on disk will link them.")
+            self.open_btn.setEnabled(bool(item.external_url))
+            return
+        if item.source == "steam":
+            status = ("no longer in this account's library" if item.missing
+                      else "in your Steam library")
+            self.location.setText(f"<b>{drive_label}</b><br>{status}<br>If you also have it in a "
+                                  "scanned folder, that copy under Games shows this play time too.")
+            self.open_btn.setEnabled(bool(item.external_url))
+            return
         if item.missing:
             status = "not found on its last scan"
         elif mount:
@@ -343,12 +369,14 @@ class ItemPage(QScrollArea):
         self.episodes.setFixedHeight(self.episodes.horizontalHeader().height()
                                      + row_h * min(max(len(eps), 1), 14) + 4)
         if not eps:
-            self.episodes_info.setText("No episode list yet. TVmaze (TV) and MyAnimeList (anime) "
-                                       "provide one without keys; AniDB / TMDB with a key. "
+            self.episodes_info.setText("No episode list yet. TVmaze (TV) and MyAnimeList / Kitsu "
+                                       "(anime) provide one without keys; AniDB / TMDB with a key. "
                                        "Use Refetch to try again.")
             return
         scored = [e for e in eps if e.score is not None]
-        bits = [f"{len(eps)} episodes from {eps[0].source}",
+        source = eps[0].source
+        bits = [f"{len(eps)} episodes found in your files" if source == enrich.FILES_SOURCE
+                else f"{len(eps)} episodes from {source}",
                 f"{sum(e.on_disk for e in eps)} on disk"]
         if scored:
             avg = sum(e.score / (e.score_max or 10) for e in scored) / len(scored) * 10
@@ -363,6 +391,11 @@ class ItemPage(QScrollArea):
             QDesktopServices.openUrl(QUrl(url))
 
     def _set_done(self, done: bool, when: str | None) -> None:
+        if self.item and self.item.source == db.WANTED:
+            self.done_btn.setChecked(False)
+            self.done_btn.setText("Got it (move to library)")
+            self.done_when.setText("")
+            return
         self.done_btn.setChecked(done)
         verb = categories.get(self.item.category if self.item else None).done
         self.done_btn.setText(f"✓  {verb}" if done else f"Mark as {verb.lower()}")
@@ -372,7 +405,10 @@ class ItemPage(QScrollArea):
 
     def _toggle_done(self, checked: bool) -> None:
         with db.session() as conn:
-            library.set_completed(conn, [self.item.id], checked)
+            if self.item.source == db.WANTED:
+                library.acquire(conn, [self.item.id])
+            else:
+                library.set_completed(conn, [self.item.id], checked)
             item = db.get_item(conn, self.item.id)
         self.item = item
         self._set_done(item.completed, item.completed_at)
@@ -389,11 +425,11 @@ class ItemPage(QScrollArea):
             self.refetch.emit(self.item.id)
 
     def _delete(self) -> None:
-        if QMessageBox.question(
-            self, "Remove from library",
-            f"Remove “{self.item.title}” from the library?\nFiles on disk are not touched; "
-            "a rescan of its location will add it back.",
-        ) != QMessageBox.Yes:
+        wanted = self.item.source == db.WANTED
+        question = (f"Remove “{self.item.title}” from your Want to acquire list?" if wanted else
+                    f"Remove “{self.item.title}” from the library?\nFiles on disk are not touched; "
+                    "a rescan of its location will add it back.")
+        if QMessageBox.question(self, "Remove", question) != QMessageBox.Yes:
             return
         with db.session() as conn:
             library.remove_items(conn, [self.item.id])

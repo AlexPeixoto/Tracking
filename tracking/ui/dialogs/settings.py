@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from ... import archive, categories, db, log, paths, providers
-from .. import workers
+from .. import grid, workers
 
 LOG_LEVEL_HELP = {
     "DEBUG": "every scanner decision and service match (use when something is misdetected)",
@@ -44,6 +44,13 @@ class SettingsDialog(QDialog):
             current = db.get_setting(conn, "log_level", "INFO")
             self.level.setCurrentIndex(log.LEVELS.index(current) if current in log.LEVELS else 1)
             gform.addRow("Log level", self.level)
+
+            self.offline_style = QComboBox()
+            for key, label in grid.OFFLINE_STYLES:
+                self.offline_style.addItem(label, key)
+            current = db.get_setting(conn, "offline_style", grid.OFFLINE_TEXT)
+            self.offline_style.setCurrentIndex(max(0, self.offline_style.findData(current)))
+            gform.addRow("Disconnected drives", self.offline_style)
 
             self.workers = QSpinBox()
             self.workers.setRange(1, workers.MAX_WORKERS)
@@ -130,6 +137,7 @@ class SettingsDialog(QDialog):
                 db.set_setting(conn, key, edits[0].text().strip())
             db.set_setting(conn, "log_level", self.level.currentData())
             db.set_setting(conn, "metadata_workers", str(self.workers.value()))
+            db.set_setting(conn, "offline_style", self.offline_style.currentData())
         log.set_level(self.level.currentData())
         self.accept()
 

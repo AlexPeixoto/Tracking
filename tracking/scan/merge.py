@@ -17,18 +17,19 @@ def merge_series(items: list[FoundItem]) -> list[FoundItem]:
     """Fold episodes of the same series + season found in several places into one item.
 
     The folder item wins as the home (largest one if several); loose groups join it.
+    Two folders are never merged: each is its own release ("1a. OVA" / "1c. Series").
     """
     out: list[FoundItem] = []
     homes: dict[tuple[str, str], FoundItem] = {}
     ordered = sorted(items, key=lambda i: (not i.is_dir, -len(i.videos)))
     for it in ordered:
-        if it.kind != "series" or not it.series_key:
+        if it.kind != "series" or not it.series_key or it.series_key.startswith("|"):
             out.append(it)
             continue
         k = (it.category, it.series_key)
         home = homes.get(k)
-        if home is None:
-            homes[k] = it
+        if home is None or it.is_dir:
+            homes.setdefault(k, it)
             out.append(it)
             continue
         log.debug("merge %s into %s (%s)", it.rel_path, home.rel_path, it.series_key)

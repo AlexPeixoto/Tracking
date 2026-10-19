@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 
 from .base import (
-    Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, best_match, cached_json,
+    Candidate, Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, best_match,
+    cached_json,
     media_format_bonus, session,
 )
 
@@ -26,6 +27,23 @@ query ($search: String) {
 
 _limit = RateLimiter(2.1)  # AniList allows ~30 requests/minute
 
+def _media(title: str, fetch) -> list[dict]:
+    data = cached_json("anilist", title.lower(), 14, fetch)
+    return ((data.get("data") or {}).get("Page") or {}).get("media") or []
+
+
+def _fetcher(title: str):
+    def fetch():
+        _limit.wait()
+        r = session().post(API_URL, json={"query": QUERY, "variables": {"search": title}},
+                           timeout=20)
+        if r.status_code == 429:
+            raise ProviderError("AniList rate limit hit, try again in a minute")
+        r.raise_for_status()
+        return r.json()
+    return fetch
+
+
 def _search(title: str, year: int | None, kind: str | None = None) -> Metadata | None:
     """``kind`` ("series" / "movie") steers the match towards TV or movie entries."""
     def fetch():
@@ -37,8 +55,7 @@ def _search(title: str, year: int | None, kind: str | None = None) -> Metadata |
         r.raise_for_status()
         return r.json()
 
-    data = cached_json("anilist", title.lower(), 14, fetch)
-    media = ((data.get("data") or {}).get("Page") or {}).get("media") or []
+    media = _media(title, fetch)
     best = best_match(
         title, year, media,
         names=lambda m: [*(m.get("title") or {}).values(), *(m.get("synonyms") or [])],
@@ -66,4 +83,15 @@ def lookup(q: Query) -> Metadata | None:
     return _search(q.title, q.year, q.kind)
 
 
-PROVIDER = Provider("anilist", "AniList", frozenset({"anime"}), lookup, cover_rank=20)
+def search(q: Query) -> list[Candidate]:
+    out = []
+    for m in _media(q.title, _fetcher(q.title)):
+        t = m.get("title") or {}
+        fmt = (m.get("format") or "").replace("_", " ").title()
+        out.append(Candidate(t.get("english") or t.get("romaji") or "?", m.get("seasonYear"),
+                             " · ".join(x for x in ("Anime", fmt) if x),
+                             (m.get("coverImage") or {}).get("large"), m.get("siteUrl")))
+    return out
+
+
+PROVIDER = Provider("anilist", "AniList", frozenset({"anime"}), lookup, cover_rank=20, search=search)

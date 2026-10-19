@@ -222,9 +222,28 @@ def _merge(src: sqlite3.Connection, covers_dir: Path) -> ImportResult:
                 result.need_metadata += 1
             result.added += 1
 
+        _merge_completions(dst, src)
         for r in src.execute("SELECT * FROM settings"):
             dst.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?,?)", (r["key"], r["value"]))
     return result
+
+
+def _merge_completions(dst, src) -> None:
+    """Completed entries the backup has and this library doesn't (same title and date).
+    Their own covers are looked up again ("Fetch missing covers")."""
+    if not src.execute("SELECT 1 FROM sqlite_master WHERE name='completions'").fetchone():
+        return
+    for r in src.execute("SELECT c.*, i.volume_uid, i.rel_path FROM completions c "
+                         "LEFT JOIN items i ON i.id = c.item_id"):
+        if dst.execute("SELECT 1 FROM completions WHERE title=? COLLATE NOCASE AND completed_on=?",
+                       (r["title"], r["completed_on"])).fetchone():
+            continue
+        item = dst.execute("SELECT id FROM items WHERE volume_uid=? AND rel_path=?",
+                           (r["volume_uid"], r["rel_path"])).fetchone() if r["rel_path"] else None
+        dst.execute("INSERT INTO completions(item_id, title, category, platform, completed_on, "
+                    "position, notes) VALUES(?,?,?,?,?,?,?)",
+                    (item["id"] if item else None, r["title"], r["category"], r["platform"],
+                     r["completed_on"], r["position"], r["notes"]))
 
 
 def _merge_item(dst, src, mine, theirs, covers_dir, posters, result) -> None:

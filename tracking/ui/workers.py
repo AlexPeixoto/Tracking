@@ -11,9 +11,13 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import requests
 from PySide6.QtCore import QObject, QRunnable, Signal
 
-from .. import db, enrich, scan, volumes
+from .. import categories, db, enrich, scan, volumes
+from ..providers import ProviderError
+
+EPISODIC = [c.key for c in categories.CATEGORIES if c.episodic]
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +92,12 @@ class ScanJob(Job):
                     "WHERE r.id=?", (rid,)).fetchone()
                 offline.append(f"{row['label'] or 'drive'}:/{row['rel_path']}")
                 continue
+            except ProviderError as e:  # an online account: no key, private profile...
+                self.signals.warning.emit(str(e))
+                continue
+            except requests.RequestException as e:
+                self.signals.warning.emit(f"Couldn't reach Steam: {e}")
+                continue
             found, new, missing = found + res.found, new + res.new, missing + res.missing
         self.signals.item_changed.emit(-1)
         if offline:
@@ -143,7 +153,17 @@ class EnrichJob(Job):
             owner.signals.item_changed.emit(iid)
 
         # 2) online metadata, several items at once
-        todo = [r for r in rows if self.force or not self.only_pending or not r["enriched_at"]]
+        # Series without an episode list count as pending too (older versions didn't
+        # fetch one, or the service that has it was down).
+        no_episodes = {r["id"] for r in conn.execute(
+            "SELECT i.id FROM items i WHERE i.kind='series' AND i.category IN "
+            f"({','.join('?' * len(EPISODIC))}) AND NOT EXISTS "
+            "(SELECT 1 FROM episodes e WHERE e.item_id=i.id)", EPISODIC)}
+        # So do items still without a cover: a service may have been down, or a newer
+        # version may match the title better. Answers are cached, so retrying is cheap.
+        no_cover = {r["id"] for r in conn.execute("SELECT id FROM items WHERE poster IS NULL")}
+        todo = [r for r in rows if self.force or not self.only_pending or not r["enriched_at"]
+                or r["id"] in no_episodes or r["id"] in no_cover]
         workers = metadata_workers(conn)
         done = self._fetch_parallel(todo, mounts, owner, workers)
         return f"metadata updated for {done} items"
@@ -207,3 +227,32 @@ def metadata_workers(conn) -> int:
     except ValueError:
         n = DEFAULT_WORKERS
     return max(1, min(MAX_WORKERS, n))
+
+
+class CompletionCoversJob(Job):
+    """Covers for Completed entries that aren't in the library (imported / typed in)."""
+
+    def __init__(self, ids: list[int] | None = None):
+        super().__init__()
+        self.ids = ids
+
+    def work(self, conn) -> str:
+        from .. import completions
+
+        todo = self.ids if self.ids is not None else completions.needs_cover(conn)
+        found = 0
+        for n, cid in enumerate(todo, 1):
+            if self.cancelled():
+                break
+            c = completions.get(conn, cid)
+            if not c:
+                continue
+            self.signals.progress.emit(f"Cover {n}/{len(todo)}: {c.title}")
+            try:
+                if completions.fetch_cover(conn, cid):
+                    found += 1
+                    conn.commit()
+                    self.signals.item_changed.emit(-1)
+            except Exception as e:
+                log.warning("cover for completed %r failed: %s", c.title, e)
+        return f"Covers found for {found} of {len(todo)} completed entries"

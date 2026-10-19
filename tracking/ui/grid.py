@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import QAbstractListModel, QModelIndex, QPointF, QRect, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from .. import db, paths, scores as score_math
@@ -20,6 +20,16 @@ def fmt_hours(hours: float | None, category: str) -> str:
         return f"{hours:.1f}h main" if hours < 10 else f"{hours:.0f}h main"
     h, m = divmod(round(hours * 60), 60)
     return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+def fmt_played(minutes: float | None) -> str:
+    """Steam play time: "45m", "6.5h", "120h"."""
+    if minutes is None:
+        return ""
+    if minutes < 60:
+        return f"{minutes:.0f}m"
+    hours = minutes / 60
+    return f"{hours:.1f}h" if hours < 10 else f"{hours:.0f}h"
 
 
 def fmt_rating(item: db.Item) -> str:
@@ -86,12 +96,19 @@ def draw_placeholder(p: QPainter, rect: QRect, item: db.Item) -> None:
 
 posters = PosterCache()
 
+# How a disconnected drive shows on cards (setting "offline_style").
+OFFLINE_TEXT, OFFLINE_ICON, OFFLINE_NONE = "text", "icon", "none"
+OFFLINE_STYLES = [(OFFLINE_TEXT, "Text over the cover (dimmed)"),
+                  (OFFLINE_ICON, "Small icon, bottom-right"),
+                  (OFFLINE_NONE, "Nothing")]
+
 
 class ItemModel(QAbstractListModel):
     def __init__(self):
         super().__init__()
         self.items: list[db.Item] = []
         self.offline_volumes: set[str] = set()
+        self.offline_style = OFFLINE_TEXT  # Settings > General > "Disconnected drives"
 
     def set_items(self, items: list[db.Item]) -> None:
         self.beginResetModel()
@@ -151,7 +168,11 @@ class CardDelegate(QStyledItemDelegate):
         poster_rect = QRect(r.x(), r.y(), CARD_W, POSTER_H)
         selected = bool(option.state & QStyle.State_Selected)
         hovered = bool(option.state & QStyle.State_MouseOver)
-        dimmed = item.missing or item.volume_uid in self.model.offline_volumes
+        offline = item.volume_uid in self.model.offline_volumes and not item.missing
+        style = self.model.offline_style
+        # Deleted files always show; a disconnected drive shows the way Settings says.
+        dimmed = item.missing or (offline and style == OFFLINE_TEXT)
+        offline_icon = offline and style == OFFLINE_ICON
 
         clip = QPainterPath()
         clip.addRoundedRect(QRectF(poster_rect), 10, 10)
@@ -168,7 +189,10 @@ class CardDelegate(QStyledItemDelegate):
         p.setClipping(False)
 
         if item.scores:
-            self._score_chips(p, option, poster_rect, item)
+            # Keep the bottom-right corner free for the offline icon.
+            self._score_chips(p, option, poster_rect, item, reserve=30 if offline_icon else 0)
+        if offline_icon:
+            self._offline_icon(p, poster_rect)
 
         if item.completed:
             badge = QRectF(poster_rect.x() + 8, poster_rect.y() + 8, 26, 26)
@@ -210,7 +234,9 @@ class CardDelegate(QStyledItemDelegate):
             y += fm.height()
 
         meta = [fmt_hours(item.total_hours, item.category)]
-        if item.category == "game" and item.platform:
+        if item.playtime_min is not None:
+            meta.append(f"{fmt_played(item.playtime_min)} played")  # Steam: replaces "PC"
+        elif item.category == "game" and item.platform:
             meta.insert(0, item.platform)
         elif item.kind == "movie" and item.category in ("anime", "unknown"):
             meta.insert(0, "Movie")
@@ -225,7 +251,29 @@ class CardDelegate(QStyledItemDelegate):
         p.restore()
 
     @staticmethod
-    def _score_chips(p: QPainter, option, poster: QRect, item: db.Item) -> None:
+    def _offline_icon(p: QPainter, poster: QRect) -> None:
+        """Small "drive not connected" badge in the poster's bottom-right corner."""
+        size = 24
+        r = QRectF(poster.right() - size - 6, poster.bottom() - size - 6, size, size)
+        p.save()
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(20, 22, 27, 220))
+        p.drawEllipse(r)
+        # A little unplugged disk: drive body plus a slash.
+        pen = QPen(QColor("#e0e3ea"), 1.6)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        body = QRectF(r.x() + 6, r.y() + 8, size - 12, size - 15)
+        p.drawRoundedRect(body, 2, 2)
+        p.drawPoint(QPointF(body.right() - 2.5, body.center().y()))
+        pen.setColor(QColor("#f26b5b"))
+        pen.setWidthF(2)
+        p.setPen(pen)
+        p.drawLine(QPointF(r.x() + 6, r.bottom() - 6), QPointF(r.right() - 6, r.y() + 6))
+        p.restore()
+
+    @staticmethod
+    def _score_chips(p: QPainter, option, poster: QRect, item: db.Item, reserve: int = 0) -> None:
         """Every score as a small coloured chip along the bottom of the poster
         (best-known first), wrapping onto a second row if needed."""
         f = QFont(option.font)
@@ -240,7 +288,7 @@ class CardDelegate(QStyledItemDelegate):
         width = 0
         for text, s in chips:
             w = fm.horizontalAdvance(text) + 2 * pad
-            if rows[-1] and width + w > poster.width() - 2 * pad:
+            if rows[-1] and width + w > poster.width() - 2 * pad - reserve:
                 if len(rows) == 2:
                     break
                 rows.append([])

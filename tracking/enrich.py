@@ -109,7 +109,9 @@ def combine(category: str, results: dict[str, Metadata],
     ranks = cover_rank or {p.name: p.cover_rank for p in providers.REGISTRY}
     with_cover = [name for name, r in results.items() if r.poster_url]
     if with_cover:
-        md.poster_url = results[min(with_cover, key=lambda n: ranks.get(n, 50))].poster_url
+        # A service sure of its art (Steam's library image for a known app) goes first.
+        md.poster_url = results[min(with_cover, key=lambda n: (not results[n].cover_first,
+                                                               ranks.get(n, 50)))].poster_url
     by_source = {sc.source: sc for sc in md.scores}
     head = next((by_source[n] for n in RATING_PREF.get(category, []) if n in by_source),
                 md.scores[0] if md.scores else None)
@@ -130,8 +132,9 @@ def search_titles(item: db.Item) -> list[str]:
 
 def make_query(conn: sqlite3.Connection, item: db.Item) -> providers.Query:
     settings = {r["key"]: r["value"] or "" for r in conn.execute("SELECT key, value FROM settings")}
-    return providers.Query(item.title, item.year, item.category, item.kind, item.platform,
-                           item.season, settings)
+    return providers.Query(item.title, year=item.year, category=item.category, kind=item.kind,
+                           platform=item.platform, season=item.season,
+                           steam_appid=item.steam_appid, settings=settings)
 
 
 def lookup(conn: sqlite3.Connection, item: db.Item
@@ -189,6 +192,19 @@ def fetch_episodes(query: providers.Query, results: dict[str, Metadata]
     return None
 
 
+FILES_SOURCE = "your files"
+
+
+def episodes_from_files(conn: sqlite3.Connection, item: db.Item
+                        ) -> tuple[str, list[providers.Episode]] | None:
+    """The episode numbers found in the item's files, as a bare episode list."""
+    rows = conn.execute(
+        "SELECT DISTINCT COALESCE(season, ?) s, episode FROM media_files "
+        "WHERE item_id=? AND episode IS NOT NULL ORDER BY s, episode", (item.season or 1, item.id))
+    eps = [providers.Episode(r["s"], r["episode"]) for r in rows]
+    return (FILES_SOURCE, eps) if eps else None
+
+
 def save_episodes(conn: sqlite3.Connection, item_id: int, source: str,
                   episodes: list[providers.Episode]) -> None:
     conn.execute("DELETE FROM episodes WHERE item_id=?", (item_id,))
@@ -206,8 +222,10 @@ def enrich_item(conn: sqlite3.Connection, item_id: int, mount: str | None,
     if not item:
         return []
     md, warnings, results = lookup(conn, item)
-    if categories.get(item.category).episodic and item.kind != "movie" and results:
-        found = fetch_episodes(make_query(conn, item), results)
+    if categories.get(item.category).episodic and item.kind != "movie":
+        found = fetch_episodes(make_query(conn, item), results) if results else None
+        # No service could list them (offline, unknown show): show what's on disk at least.
+        found = found or episodes_from_files(conn, item)
         if found:
             save_episodes(conn, item.id, *found)
             log.info("episodes for %r: %d from %s", item.title, len(found[1]), found[0])

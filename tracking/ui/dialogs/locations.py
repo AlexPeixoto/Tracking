@@ -5,13 +5,17 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
+import requests
+
 from ... import categories, db, library, platforms, scan, volumes
+from ...sources import steam
 
 # What a location can be set to hold: auto-detect or any section except Unknown.
 CATEGORY_LABELS = {"auto": "Auto-detect",
@@ -110,6 +114,87 @@ class AddLocationDialog(QDialog):
         return self.path.text(), self.category.currentData(), self.platform.currentData()
 
 
+class AddSteamDialog(QDialog):
+    """A Steam account as a location: its games and play time land in Games / PC."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Steam account")
+        self.setMinimumWidth(560)
+        self.account: steam.Account | None = None
+        form = QFormLayout(self)
+
+        self.name = QLineEdit()
+        self.name.setPlaceholderText("Profile name, profile URL or SteamID64")
+        form.addRow("Account", self.name)
+        name_hint = QLabel("The name in your profile address (steamcommunity.com/id/<b>name</b>), "
+                           "the whole address, or the 17-digit SteamID64. Your sign-in name "
+                           "isn't public, so it may not work.")
+        name_hint.setWordWrap(True)
+        name_hint.setObjectName("Muted")
+        form.addRow("", name_hint)
+
+        self.key = QLineEdit()
+        self.key.setEchoMode(QLineEdit.PasswordEchoOnEdit)
+        self.key.setPlaceholderText("Needed for your games and play time")
+        with db.session() as conn:
+            self.key.setText(db.get_setting(conn, steam.KEY_SETTING))
+        form.addRow("Web API key", self.key)
+        key_hint = QLabel(
+            f"Steam only shares owned games and play time with a Web API key. It's free: sign "
+            f"in at <a style='color:#5b8cff' href='{steam.KEY_URL}'>{steam.KEY_URL}</a>, "
+            "enter any domain name (e.g. localhost) and copy the key here. It's saved in "
+            "Settings and never included in exports.")
+        key_hint.setWordWrap(True)
+        key_hint.setOpenExternalLinks(True)
+        key_hint.setObjectName("Muted")
+        form.addRow("", key_hint)
+
+        self.wishlist = QCheckBox("Also put my Steam wish list on “Want to acquire”")
+        self.wishlist.setChecked(True)
+        form.addRow("", self.wishlist)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Add and import")
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def _accept(self):
+        QGuiApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.account = steam.resolve(self.name.text())
+        except steam.SteamError as e:
+            QGuiApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Add Steam account", str(e))
+            return
+        except requests.RequestException as e:
+            QGuiApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Add Steam account", f"Couldn't reach Steam: {e}")
+            return
+        QGuiApplication.restoreOverrideCursor()
+        key = self.key.text().strip()
+        if not key:
+            ok = QMessageBox.question(
+                self, "No Web API key",
+                f"Found {self.account.name}. Without a Web API key Steam won't share the "
+                "games you own or your play time"
+                + (", only your wish list." if self.wishlist.isChecked() else ".")
+                + f"\n\nGet a free key at {steam.KEY_URL}. Add the account anyway?")
+            if ok != QMessageBox.Yes:
+                return
+        elif self.account.private:
+            QMessageBox.information(
+                self, "Private profile",
+                f"{self.account.name}'s profile isn't public. Steam lists its games only if "
+                "the key belongs to this same account or its “Game details” are set to Public "
+                "(Steam › Edit Profile › Privacy Settings).")
+        with db.session() as conn:
+            if key:
+                db.set_setting(conn, steam.KEY_SETTING, key)
+        self.accept()
+
+
 class LocationsDialog(QDialog):
     """List of library roots with their drive status."""
 
@@ -132,13 +217,16 @@ class LocationsDialog(QDialog):
         add = QPushButton("Add…")
         add.setObjectName("Primary")
         add.clicked.connect(self._add)
+        add_steam = QPushButton("Add Steam account…")
+        add_steam.setToolTip("Import the games you own on Steam, with play time")
+        add_steam.clicked.connect(self._add_steam)
         rescan = QPushButton("Rescan selected")
         rescan.clicked.connect(self._rescan)
         remove = QPushButton("Remove")
         remove.clicked.connect(self._remove)
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
-        for b in (add, rescan, remove):
+        for b in (add, add_steam, rescan, remove):
             row.addWidget(b)
         row.addStretch(1)
         row.addWidget(close)
@@ -160,11 +248,17 @@ class LocationsDialog(QDialog):
             cat = CATEGORY_LABELS.get(r["category"], r["category"])
             if r["platform"]:
                 cat += f" / {r['platform']}"
+            if steam.is_account(r["volume_uid"]):
+                status = f"Steam account  ·  {r['n']} games"
+            elif mount:
+                status = f"online at {mount}  ·  {r['n']} items"
+            else:
+                status = f"offline  ·  {r['n']} items"
             cells = [
                 r["label"] or "(no label)",
-                "/" + r["rel_path"],
+                "" if steam.is_account(r["volume_uid"]) else "/" + r["rel_path"],
                 cat,
-                f"online at {mount}  ·  {r['n']} items" if mount else f"offline  ·  {r['n']} items",
+                status,
                 r["volume_uid"],
             ]
             for c, text in enumerate(cells):
@@ -185,6 +279,15 @@ class LocationsDialog(QDialog):
         path, category, platform = dlg.values()
         with db.session() as conn:
             rid = scan.add_root(conn, path, category, platform)
+        self.added_ids.append(rid)
+        self._load()
+
+    def _add_steam(self):
+        dlg = AddSteamDialog(self)
+        if dlg.exec() != QDialog.Accepted or not dlg.account:
+            return
+        with db.session() as conn:
+            rid = steam.add_account(conn, dlg.account, wishlist=dlg.wishlist.isChecked())
         self.added_ids.append(rid)
         self._load()
 
@@ -230,8 +333,11 @@ class RescanDialog(QDialog):
                 "JOIN volumes v ON v.uid=r.volume_uid ORDER BY v.label, r.rel_path").fetchall()
             for r in rows:
                 mount = scan.mount_for(conn, r["volume_uid"], known)
-                text = f"{r['label'] or '(no label)'}  /{r['rel_path']}"
-                text += f"   — {mount}" if mount else "   — offline"
+                if steam.is_account(r["volume_uid"]):
+                    text = f"{r['label']}   — games and play time"
+                else:
+                    text = f"{r['label'] or '(no label)'}  /{r['rel_path']}"
+                    text += f"   — {mount}" if mount else "   — offline"
                 it = QListWidgetItem(text)
                 it.setData(Qt.UserRole, r["id"])
                 if mount:

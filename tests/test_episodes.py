@@ -84,3 +84,31 @@ def test_scanner_records_episode_numbers(tmp_path):
     p.write_bytes(b"x")
     item = scan.collect(str(tmp_path), "", Hints())[0]
     assert [(v.season, v.episode) for v in item.videos] == [(2, 3)]
+
+
+def test_kitsu_episodes_paginate(monkeypatch):
+    from tracking.providers import kitsu
+
+    def page(numbers):
+        return {"data": [{"attributes": {"number": n, "canonicalTitle": f"Ep {n}", "airdate": "2015-07-08",
+                                         "length": 4}} for n in numbers]}
+    monkeypatch.setattr(kitsu, "cached_json", fake_cache({
+        "episodes-7-0": page(range(1, 21)), "episodes-7-1": page(range(21, 25))}))
+    eps = kitsu.episodes(Query("Bikini Warriors", season=1), "7")
+    assert [e.number for e in eps] == list(range(1, 25))
+    assert (eps[0].title, eps[0].runtime_min, eps[0].score) == ("Ep 1", 4, None)
+
+
+def test_episode_list_falls_back_to_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRACKING_DATA_DIR", str(tmp_path))
+    with db.session() as conn:
+        iid = conn.execute("INSERT INTO items(volume_uid, rel_path, is_dir, category, title, kind) "
+                           "VALUES('v', 'Show', 1, 'anime', 'Obscure Show', 'series')").lastrowid
+        for e in (1, 2, 4):
+            conn.execute("INSERT INTO media_files(item_id, rel_path, size_bytes, mtime, season, episode) "
+                         "VALUES(?, ?, 1, 0, 1, ?)", (iid, f"Show/{e:02d}.mkv", e))
+        item = db.get_item(conn, iid)
+        source, eps = enrich.episodes_from_files(conn, item)
+        assert source == enrich.FILES_SOURCE and [e.number for e in eps] == [1, 2, 4]
+        enrich.save_episodes(conn, iid, source, eps)
+        assert all(e.on_disk for e in db.get_episodes(conn, iid))
