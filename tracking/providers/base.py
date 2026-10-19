@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -167,7 +168,10 @@ def cached_json(provider: str, key: str, max_age_days: float, fetch) -> object:
         except ValueError:
             pass
     data = fetch()
-    f.write_text(json.dumps(data), encoding="utf-8")
+    # Write-then-rename, so a parallel reader never sees a half-written file.
+    tmp = f.with_name(f"{f.name}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(tmp, f)
     return data
 
 

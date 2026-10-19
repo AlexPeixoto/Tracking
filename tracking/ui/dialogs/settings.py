@@ -9,10 +9,11 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget,
+    QLineEdit, QMessageBox, QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from ... import archive, categories, db, log, paths, providers
+from .. import workers
 
 LOG_LEVEL_HELP = {
     "DEBUG": "every scanner decision and service match (use when something is misdetected)",
@@ -43,6 +44,18 @@ class SettingsDialog(QDialog):
             current = db.get_setting(conn, "log_level", "INFO")
             self.level.setCurrentIndex(log.LEVELS.index(current) if current in log.LEVELS else 1)
             gform.addRow("Log level", self.level)
+
+            self.workers = QSpinBox()
+            self.workers.setRange(1, workers.MAX_WORKERS)
+            self.workers.setValue(workers.metadata_workers(conn))
+            self.workers.setSuffix(" at a time")
+            gform.addRow("Metadata downloads", self.workers)
+            hint = QLabel("How many items to fetch ratings and covers for in parallel. Each site's "
+                          "own speed limit is still respected, so more doesn't hit any site harder; "
+                          "1 = one by one.")
+            hint.setObjectName("Muted")
+            hint.setWordWrap(True)
+            gform.addRow("", hint)
             where = QLabel(f"Log file: {log.log_file()}")
             where.setObjectName("Muted")
             where.setWordWrap(True)
@@ -116,6 +129,7 @@ class SettingsDialog(QDialog):
             for key, edits in self.edits.items():
                 db.set_setting(conn, key, edits[0].text().strip())
             db.set_setting(conn, "log_level", self.level.currentData())
+            db.set_setting(conn, "metadata_workers", str(self.workers.value()))
         log.set_level(self.level.currentData())
         self.accept()
 

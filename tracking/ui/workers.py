@@ -1,13 +1,15 @@
 """Background jobs: scanning, measuring durations, fetching metadata.
 
-Each job runs on a QThreadPool thread with its own SQLite connection and
-reports back through Qt signals (which are delivered on the GUI thread).
+Jobs run one at a time on a QThreadPool thread (main_window queues them) and
+report back through Qt signals, which are delivered on the GUI thread. A
+metadata fetch fans out to several worker threads itself (see _fetch_parallel).
 """
 
 from __future__ import annotations
 
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PySide6.QtCore import QObject, QRunnable, Signal
 
@@ -140,16 +142,68 @@ class EnrichJob(Job):
             enrich.measure_durations(conn, iid, mount, owner.cancelled)
             owner.signals.item_changed.emit(iid)
 
-        # 2) online metadata
+        # 2) online metadata, several items at once
         todo = [r for r in rows if self.force or not self.only_pending or not r["enriched_at"]]
-        done = 0
-        for n, r in enumerate(todo, 1):
-            if owner.cancelled():
-                break
-            item = db.get_item(conn, r["id"])
-            owner.signals.progress.emit(f"Metadata {n}/{len(todo)}: {item.title}")
-            for w in enrich.enrich_item(conn, r["id"], mounts.get(r["volume_uid"]), force=self.force):
-                owner.signals.warning.emit(w)
-            owner.signals.item_changed.emit(r["id"])
-            done += 1
+        workers = metadata_workers(conn)
+        done = self._fetch_parallel(todo, mounts, owner, workers)
         return f"metadata updated for {done} items"
+
+    def _fetch_parallel(self, todo, mounts, owner: Job, workers: int) -> int:
+        """Fetch metadata for ``todo`` with ``workers`` threads.
+
+        Safe because every worker uses its own DB connection, and each service's
+        RateLimiter is shared and thread-safe: more workers never hit a site
+        faster than its limit; they overlap waiting on *different* sites
+        (HLTB, Steam, AniList, cover downloads...).
+        """
+        lock = threading.Lock()
+        state = {"started": 0, "done": 0}
+
+        def one(row) -> None:
+            if owner.cancelled():
+                return
+            with lock:
+                state["started"] += 1
+                n = state["started"]
+            conn = db.connect()
+            try:
+                item = db.get_item(conn, row["id"])
+                if not item:
+                    return
+                owner.signals.progress.emit(
+                    f"Metadata {n}/{len(todo)}: {item.title}"
+                    + (f"  ({workers} at a time)" if workers > 1 else ""))
+                for w in enrich.enrich_item(conn, row["id"], mounts.get(row["volume_uid"]),
+                                            force=self.force):
+                    owner.signals.warning.emit(w)
+            finally:
+                conn.close()
+            owner.signals.item_changed.emit(row["id"])
+            with lock:
+                state["done"] += 1
+
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="metadata") as pool:
+            futures = [pool.submit(one, r) for r in todo]
+            for f in as_completed(futures):
+                try:
+                    f.result()
+                except Exception as e:  # one bad item shouldn't stop the batch
+                    log.exception("metadata worker failed")
+                    owner.signals.warning.emit(f"Metadata failed for an item: {e}")
+                if owner.cancelled():
+                    pool.shutdown(wait=True, cancel_futures=True)
+                    break
+        return state["done"]
+
+
+DEFAULT_WORKERS = 4
+MAX_WORKERS = 8
+
+
+def metadata_workers(conn) -> int:
+    """How many items to fetch at once (Settings > General)."""
+    try:
+        n = int(db.get_setting(conn, "metadata_workers", str(DEFAULT_WORKERS)))
+    except ValueError:
+        n = DEFAULT_WORKERS
+    return max(1, min(MAX_WORKERS, n))

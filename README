@@ -113,6 +113,11 @@ Items are not tied to a drive
 
 Filters: "Hide completed" and "Hide missing" next to the search box.
 
+Metadata is fetched for several items at once (Settings > General, default 4;
+1 = one by one). Each site's own rate limit still applies, so this overlaps
+waiting on different sites rather than hitting any one harder. Games are bounded
+by Steam's limit (about 3 s per PC game); 24 games took 61 s instead of 115 s.
+
 Jobs never block each other: starting a scan or metadata update while another
 runs queues it (shown as "+N queued" in the status bar); scans go to the front
 of the queue. Cancel stops only the running job; finished work is kept.

@@ -10,6 +10,7 @@ Each thread should open its own connection with :func:`connect`.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -142,13 +143,25 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+_ready: set[str] = set()       # database files whose schema is set up in this process
+_ready_lock = threading.Lock()
+
+
 def connect(db_file: Path | None = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_file or paths.db_path(), timeout=30)
+    """A new connection (one per thread). Schema creation and migrations run on
+    the first connection to each file only, so parallel workers don't all try
+    to write the schema at once."""
+    path = Path(db_file or paths.db_path())
+    conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.executescript(SCHEMA)
-    _migrate(conn)
+    key = str(path.resolve())
+    with _ready_lock:
+        if key not in _ready or not path.exists():
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.executescript(SCHEMA)
+            _migrate(conn)
+            _ready.add(key)
     return conn
 
 
