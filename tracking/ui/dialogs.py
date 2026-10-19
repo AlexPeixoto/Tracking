@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from datetime import date
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -12,7 +14,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from .. import classify, db, log, scanner, volumes
+from .. import backup, classify, db, log, paths, scanner, volumes
 
 PLATFORMS = sorted(set(classify.PLATFORM_KEYS.values()))
 CATEGORY_LABELS = {"auto": "Auto-detect", "anime": "Anime", "movie": "Movies", "game": "Games"}
@@ -330,6 +332,31 @@ class SettingsDialog(QDialog):
             where.setWordWrap(True)
             where.setTextInteractionFlags(Qt.TextSelectableByMouse)
             gform.addRow("", where)
+
+            data = QLabel(f"{paths.data_dir()}")
+            data.setWordWrap(True)
+            data.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            gform.addRow("Library data", data)
+            row = QHBoxLayout()
+            open_btn = QPushButton("Open data folder")
+            open_btn.clicked.connect(lambda: _open_in_explorer(paths.data_dir()))
+            backup_btn = QPushButton("Back up…")
+            backup_btn.clicked.connect(self._backup)
+            row.addWidget(open_btn)
+            row.addWidget(backup_btn)
+            row.addStretch(1)
+            gform.addRow("", row)
+            portable = ("Portable mode is on: data lives next to Tracking.exe."
+                        if paths.data_dir() == paths.portable_dir() else
+                        f"Portable mode: create a folder named “data” next to Tracking.exe "
+                        f"({paths.portable_dir()}) and unzip a backup into it; the app "
+                        f"then keeps everything there.")
+            note = QLabel("A backup is one .zip with the library (items, completion, notes, "
+                          "settings and API keys) and all covers. To restore or move to another "
+                          "PC, close Tracking and unzip it into the data folder. " + portable)
+            note.setObjectName("Muted")
+            note.setWordWrap(True)
+            gform.addRow("", note)
             tabs.addTab(general, "General")
             for tab_name, keyless, fields in self.TABS:
                 page = QWidget()
@@ -368,6 +395,24 @@ class SettingsDialog(QDialog):
             db.set_setting(conn, "log_level", self.level.currentData())
         log.set_level(self.level.currentData())
         self.accept()
+
+    def _backup(self):
+        default = str(Path.home() / f"Tracking-backup-{date.today():%Y-%m-%d}.zip")
+        target, _ = QFileDialog.getSaveFileName(self, "Back up library", default, "Zip files (*.zip)")
+        if not target:
+            return
+        try:
+            n = backup.backup(Path(target))
+        except Exception as e:
+            QMessageBox.warning(self, "Back up", f"Backup failed: {e}")
+            return
+        size = Path(target).stat().st_size / 1024 / 1024
+        QMessageBox.information(self, "Back up", f"Saved {n} files ({size:.1f} MB) to\n{target}")
+
+
+def _open_in_explorer(path: Path) -> None:
+    if os.name == "nt":
+        os.startfile(path)
 
 
 class LogDialog(QDialog):

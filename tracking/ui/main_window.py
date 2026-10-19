@@ -31,6 +31,9 @@ class MainWindow(QMainWindow):
         self.resize(1400, 860)
         self.pool = QThreadPool.globalInstance()
         self.job: Job | None = None
+        self.queue: list[Job] = []          # jobs waiting for the running one
+        self.queue_warnings_kept = False
+        self.status_text = "Ready"
         self.mounts: dict[str, str | None] = {}
         self.labels: dict[str, str] = {}
         self.nav: tuple[str | None, str | None] = (None, None)
@@ -331,26 +334,45 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ jobs
 
     def start_job(self, job: Job):
+        """Run a job now, or queue it behind the running one. Scans go to the
+        front of the queue so a newly added drive doesn't wait behind a long
+        metadata fetch; Cancel stops only the running job."""
         if self.job:
-            QMessageBox.information(self, "Busy", "Wait for the current job to finish, or cancel it.")
+            if isinstance(job, ScanJob):
+                self.queue.insert(0, job)
+            else:
+                self.queue.append(job)
+            self._show_progress(self.status_text)
             return
         self.job = job
-        self.warnings.clear()
-        self.warn_btn.hide()
-        job.signals.progress.connect(self.status.setText)
+        if not self.queue_warnings_kept:
+            self.warnings.clear()
+            self.warn_btn.hide()
+        job.signals.progress.connect(self._show_progress)
         job.signals.item_changed.connect(self._item_changed)
         job.signals.warning.connect(self._add_warning)
         job.signals.finished.connect(self._job_done)
         self.cancel_btn.show()
-        self.status.setText("Working…")
+        self._show_progress("Working…")
         self.pool.start(job)
+
+    def _show_progress(self, text: str):
+        self.status_text = text
+        waiting = f"   (+{len(self.queue)} queued)" if self.queue else ""
+        self.status.setText(text + waiting)
 
     def _job_done(self, summary: str):
         self.job = None
         self.cancel_btn.hide()
+        self.status_text = summary
         self.status.setText(summary)
         self.refresh_volumes()
         self.reload()
+        if self.queue:
+            # Keep the previous job's warnings visible while the queue drains.
+            self.queue_warnings_kept = True
+            self.start_job(self.queue.pop(0))
+            self.queue_warnings_kept = False
 
     def _add_warning(self, text: str):
         if text not in self.warnings:

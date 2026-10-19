@@ -70,6 +70,15 @@ Everything lives in %LOCALAPPDATA%\Tracking (override with TRACKING_DATA_DIR):
 A cover.jpg / folder.jpg / poster.jpg inside an item's folder is used instead
 of downloading one.
 
+Backup / moving: Settings > General > "Back up..." writes one .zip (the library
+plus all covers; safe while the app is running). To restore or move to another
+PC, close Tracking and unzip it into the data folder ("Open data folder" there).
+
+Portable mode: create a folder named "data" next to Tracking.exe and the app
+keeps its library there instead, so the exe and its data travel together
+(USB stick, synced folder). Drives are still recognised on another PC by their
+filesystem serial.
+
 
 Drives are tracked by id, not by letter
 ---------------------------------------
@@ -96,6 +105,10 @@ Items are not tied to a drive
     things after finishing them. Missing items are never deleted.
 
 Filters: "Hide completed" and "Hide missing" next to the search box.
+
+Jobs never block each other: starting a scan or metadata update while another
+runs queues it (shown as "+N queued" in the status bar); scans go to the front
+of the queue. Cancel stops only the running job; finished work is kept.
 
 
 How folders are recognised
