@@ -97,3 +97,24 @@ def test_rate_limiter_is_shared_across_threads():
         th.join()
     gaps = [b - a for a, b in zip(sorted(stamps), sorted(stamps)[1:])]
     assert min(gaps) >= 0.045
+
+
+def test_online_drive_does_not_block_parallel_writes(tmp_path, monkeypatch):
+    """Resolving mounts writes last_mount; it must be committed before workers write."""
+    import sqlite3
+
+    from tracking import db
+    from tracking.ui import workers
+
+    monkeypatch.setenv("TRACKING_DATA_DIR", str(tmp_path))
+    conn = db.connect()
+    conn.execute("INSERT INTO volumes(uid, serial, label, last_mount) VALUES('v1', 'S', 'D', 'X:\\')")
+    conn.commit()
+    monkeypatch.setattr(workers.volumes, "list_volumes", lambda: [])
+    monkeypatch.setattr(workers.scan, "mount_for",
+                        lambda c, uid, known: c.execute(
+                            "UPDATE volumes SET last_mount='Y:\\' WHERE uid=?", (uid,)) and "Y:\\")
+    workers._mounts(conn)
+    other = sqlite3.connect(tmp_path / "library.sqlite3", timeout=0.2)
+    other.execute("UPDATE volumes SET label='E' WHERE uid='v1'")   # would raise "locked"
+    other.commit()

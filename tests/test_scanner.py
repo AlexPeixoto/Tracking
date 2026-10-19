@@ -390,3 +390,15 @@ def test_year_ranges_and_dotted_names():
     assert titles.strip_order_prefix("1a. OVA - Bubblegum CRASH (1991)") == "Bubblegum CRASH (1991)"
     assert titles.strip_order_prefix("3D Dot Game Heroes") == "3D Dot Game Heroes"
     assert titles.is_weak_title("1b") and titles.is_weak_title("OVA")
+
+
+def test_numbers_that_belong_to_the_title():
+    from tracking import titles
+
+    v = titles.parse_video("Blade Runner 2049 (2017) [1080p].mkv")
+    assert (v.title, v.year, v.kind) == ("Blade Runner 2049", 2017, "movie")
+    v = titles.parse_video("[Judas] Mob Psycho 100 - 12.mkv")
+    assert (v.title, v.episode, v.season) == ("Mob Psycho 100", 12, None)
+    assert titles.parse_video("Mob Psycho 100").title == "Mob Psycho 100"
+    v = titles.parse_video("[Grp] Show 05.mkv")
+    assert (v.title, v.episode) == ("Show", 5)

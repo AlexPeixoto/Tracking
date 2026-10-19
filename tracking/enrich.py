@@ -228,6 +228,9 @@ def enrich_item(conn: sqlite3.Connection, item_id: int, mount: str | None,
         found = found or episodes_from_files(conn, item)
         if found:
             save_episodes(conn, item.id, *found)
+            # Commit now: the cover download below can take a while, and an open write
+            # would block the other metadata workers ("database is locked").
+            conn.commit()
             log.info("episodes for %r: %d from %s", item.title, len(found[1]), found[0])
 
     poster = None if force else item.poster

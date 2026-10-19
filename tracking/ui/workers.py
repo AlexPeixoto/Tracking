@@ -59,7 +59,11 @@ class Job(QRunnable):
 def _mounts(conn) -> dict[str, str | None]:
     known = volumes.list_volumes()
     uids = [r["uid"] for r in conn.execute("SELECT uid FROM volumes")]
-    return {uid: scan.mount_for(conn, uid, known) for uid in uids}
+    mounts = {uid: scan.mount_for(conn, uid, known) for uid in uids}
+    # mount_for records each drive's current letter: commit it now, or this connection
+    # holds the write lock and the parallel metadata workers fail with "database is locked".
+    conn.commit()
+    return mounts
 
 
 class ScanJob(Job):

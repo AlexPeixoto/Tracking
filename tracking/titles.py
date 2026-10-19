@@ -223,8 +223,18 @@ def parse_video(name: str) -> VideoInfo:
                 title = f"{title}: {alt}"
             for abbr in _DOTTED.findall(name):  # guessit turns "A.D.P" into "A D P"
                 title = title.replace(" ".join(re.findall(r"[A-Za-z]", abbr)), abbr.rstrip("."), 1)
-            title = front_article(title)
             year = _as_int(g.get("year"))
+            glued = _number_in_title(name, title)
+            if glued:
+                # "Blade Runner 2049 (2017)", "Mob Psycho 100 - 01": the number is part of the
+                # name; guessit read it as an episode / season.
+                title, rest = glued
+                ep = re.match(r"\s*-\s*(?:ep?\.?\s*)?(\d{1,4})\b", rest, re.I)
+                episode = int(ep.group(1)) if ep else None
+                if not re.search(r"(?i)\bs\d{1,2}\s*e\d|\bseason\b", name):
+                    season = None
+                is_series = episode is not None or season is not None
+            title = front_article(title)
             if season and season >= 1900:  # "(1987-91)": a year range, not season 1987
                 year, season = year or season, None
                 is_series = episode is not None
@@ -240,6 +250,22 @@ def parse_video(name: str) -> VideoInfo:
     if m:
         s = s.split(m.group(1))[0]
     return VideoInfo(_tidy(s) or name, year, None, None, "movie")
+
+
+def _number_in_title(name: str, title: str) -> tuple[str, str] | None:
+    """(title with its number, what follows) when a number right after guessit's title
+    belongs to it: followed by "(year)", by " - <episode>", or ending a folder name with
+    3+ digits ("Mob Psycho 100"). Plain "Show 05.mkv" stays episode 5."""
+    bare = re.sub(r"^\s*(?:\[[^\]]*\]\s*)+", "", strip_ext(name)).replace("_", " ").replace(".", " ")
+    m = re.match(rf"\s*{re.escape(title)}\s+(\d{{1,4}})\b(.*)$", bare, re.I)
+    if not m:
+        return None
+    num, rest = m.group(1), m.group(2)
+    if (re.match(r"\s*[(\[](?:19|20)\d\d[)\]]", rest)
+            or re.match(r"\s*-\s*(?:ep?\s*)?\d{1,4}\b", rest, re.I)
+            or (not rest.strip(" -") and len(num) >= 3 and strip_ext(name) == name)):
+        return f"{title} {num}", rest
+    return None
 
 
 def parse_video_name(name: str) -> tuple[str, int | None]:
