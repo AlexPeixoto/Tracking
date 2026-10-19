@@ -1,0 +1,303 @@
+"""SQLite storage.
+
+Every path stored here is *relative to a volume*, and volumes are identified by
+a stable id (see :mod:`tracking.volumes`), never by drive letter. That way a
+drive that comes back as ``F:`` instead of ``E:`` keeps all of its items.
+
+Each thread should open its own connection with :func:`connect`.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterator
+
+from . import paths
+
+CATEGORIES = ("anime", "movie", "game", "unknown")
+UNKNOWN_PLATFORM = "Unknown"
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS volumes (
+    uid        TEXT PRIMARY KEY,   -- e.g. 'guid:{...}', 'serial:1A2B-3C4D', 'unc:\\\\nas\\media'
+    serial     TEXT,               -- filesystem serial, used to recognise the drive on another PC
+    label      TEXT,
+    last_mount TEXT                -- last place we saw it mounted (display only)
+);
+
+CREATE TABLE IF NOT EXISTS roots (
+    id         INTEGER PRIMARY KEY,
+    volume_uid TEXT NOT NULL REFERENCES volumes(uid) ON DELETE CASCADE,
+    rel_path   TEXT NOT NULL,      -- '' means the whole drive
+    category   TEXT NOT NULL DEFAULT 'auto',   -- auto | anime | movie | game
+    platform   TEXT,               -- optional forced platform for game roots
+    UNIQUE (volume_uid, rel_path)
+);
+
+CREATE TABLE IF NOT EXISTS items (
+    id             INTEGER PRIMARY KEY,
+    -- Items outlive their location: removing a root or unplugging a drive keeps
+    -- the entry (and its completed state / notes); volume_uid + rel_path is
+    -- just where it was last seen.
+    root_id        INTEGER REFERENCES roots(id) ON DELETE SET NULL,
+    volume_uid     TEXT NOT NULL,
+    rel_path       TEXT NOT NULL,
+    is_dir         INTEGER NOT NULL,
+    category       TEXT NOT NULL,
+    platform       TEXT,
+    title          TEXT NOT NULL,
+    year           INTEGER,
+    user_category  TEXT,           -- manual overrides win over detection
+    user_platform  TEXT,
+    user_title     TEXT,
+    kind           TEXT,           -- 'series' | 'movie' for video items
+    season         INTEGER,
+    detected_how   TEXT,           -- why the scanner chose this category / platform
+    file_count     INTEGER NOT NULL DEFAULT 0,
+    size_bytes     INTEGER NOT NULL DEFAULT 0,
+    duration_sec   REAL,           -- anime / movie: sum of all video files
+    hltb_hours     REAL,           -- game: HowLongToBeat main story
+    hltb_extra     REAL,           -- main + extras
+    hltb_complete  REAL,           -- completionist
+    rating         REAL,
+    rating_max     REAL,
+    rating_source  TEXT,           -- 'IMDb' | 'AniDB' | 'Metacritic'
+    external_id    TEXT,
+    external_url   TEXT,
+    poster         TEXT,           -- file name inside the posters dir
+    summary        TEXT,
+    missing        INTEGER NOT NULL DEFAULT 0,  -- not found on the last scan of its location
+    completed      INTEGER NOT NULL DEFAULT 0,  -- watched / beaten
+    completed_at   TEXT,
+    notes          TEXT,
+    added_at       TEXT,
+    scanned_at     TEXT,
+    enriched_at    TEXT,
+    UNIQUE (volume_uid, rel_path)
+);
+
+CREATE TABLE IF NOT EXISTS media_files (
+    item_id      INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    rel_path     TEXT NOT NULL,
+    size_bytes   INTEGER NOT NULL,
+    mtime        REAL NOT NULL,
+    duration_sec REAL,
+    PRIMARY KEY (item_id, rel_path)
+);
+
+-- Every score we know for an item (IMDb, Rotten Tomatoes, Metacritic, AniDB, MAL...).
+CREATE TABLE IF NOT EXISTS scores (
+    item_id   INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    source    TEXT NOT NULL,
+    value     REAL NOT NULL,
+    max_value REAL NOT NULL,
+    url       TEXT,
+    PRIMARY KEY (item_id, source)
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+"""
+
+
+# Columns added after the first release: (table, column, definition).
+MIGRATIONS = [
+    ("items", "kind", "TEXT"),
+    ("items", "season", "INTEGER"),
+    ("items", "detected_how", "TEXT"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, ddl in MIGRATIONS:
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    conn.commit()
+
+
+def connect(db_file: Path | None = None) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_file or paths.db_path(), timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.executescript(SCHEMA)
+    _migrate(conn)
+    return conn
+
+
+@contextmanager
+def session(db_file: Path | None = None) -> Iterator[sqlite3.Connection]:
+    conn = connect(db_file)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
+# --- settings -----------------------------------------------------------------
+
+def get_setting(conn: sqlite3.Connection, key: str, default: str = "") -> str:
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row and row["value"] is not None else default
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO settings(key, value) VALUES(?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+
+
+# --- items --------------------------------------------------------------------
+
+@dataclass
+class Item:
+    id: int
+    volume_uid: str
+    rel_path: str
+    is_dir: bool
+    category: str
+    platform: str | None
+    title: str
+    year: int | None
+    file_count: int
+    size_bytes: int
+    duration_sec: float | None
+    hltb_hours: float | None
+    hltb_extra: float | None
+    hltb_complete: float | None
+    completed: bool
+    completed_at: str | None
+    notes: str | None
+    kind: str | None
+    season: int | None
+    detected_how: str | None
+    rating: float | None
+    rating_max: float | None
+    rating_source: str | None
+    external_url: str | None
+    poster: str | None
+    summary: str | None
+    missing: bool
+    detected_title: str
+    video_count: int
+
+    @property
+    def total_hours(self) -> float | None:
+        if self.category == "game":
+            return self.hltb_hours
+        return self.duration_sec / 3600 if self.duration_sec else None
+
+
+# Effective values: a manual override always wins over what the scanner guessed.
+ITEM_SELECT = """
+SELECT id, volume_uid, rel_path, is_dir,
+       COALESCE(user_category, category) AS category,
+       COALESCE(user_platform, platform) AS platform,
+       COALESCE(user_title, title)       AS title,
+       title AS detected_title,
+       year, file_count, size_bytes, duration_sec, hltb_hours, hltb_extra, hltb_complete,
+       completed, completed_at, notes, kind, season, detected_how,
+       rating, rating_max, rating_source, external_url, poster, summary, missing,
+       (SELECT COUNT(*) FROM media_files m WHERE m.item_id = items.id) AS video_count
+FROM items
+"""
+
+
+def row_to_item(row: sqlite3.Row) -> Item:
+    return Item(
+        id=row["id"],
+        volume_uid=row["volume_uid"],
+        rel_path=row["rel_path"],
+        is_dir=bool(row["is_dir"]),
+        category=row["category"],
+        platform=row["platform"],
+        title=row["title"],
+        year=row["year"],
+        file_count=row["file_count"],
+        size_bytes=row["size_bytes"],
+        duration_sec=row["duration_sec"],
+        hltb_hours=row["hltb_hours"],
+        hltb_extra=row["hltb_extra"],
+        hltb_complete=row["hltb_complete"],
+        completed=bool(row["completed"]),
+        completed_at=row["completed_at"],
+        notes=row["notes"],
+        kind=row["kind"],
+        season=row["season"],
+        detected_how=row["detected_how"],
+        rating=row["rating"],
+        rating_max=row["rating_max"],
+        rating_source=row["rating_source"],
+        external_url=row["external_url"],
+        poster=row["poster"],
+        summary=row["summary"],
+        missing=bool(row["missing"]),
+        detected_title=row["detected_title"],
+        video_count=row["video_count"],
+    )
+
+
+def list_items(conn: sqlite3.Connection, category: str | None = None,
+               platform: str | None = None) -> list[Item]:
+    sql = f"SELECT * FROM ({ITEM_SELECT}) WHERE 1=1"
+    args: list = []
+    if category:
+        sql += " AND category=?"
+        args.append(category)
+    if platform == UNKNOWN_PLATFORM:
+        sql += " AND platform IS NULL"
+    elif platform:
+        sql += " AND platform=?"
+        args.append(platform)
+    sql += " ORDER BY title COLLATE NOCASE"
+    return [row_to_item(r) for r in conn.execute(sql, args)]
+
+
+def get_item(conn: sqlite3.Connection, item_id: int) -> Item | None:
+    row = conn.execute(f"{ITEM_SELECT} WHERE id=?", (item_id,)).fetchone()
+    return row_to_item(row) if row else None
+
+
+@dataclass
+class Score:
+    source: str
+    value: float
+    max_value: float
+    url: str | None
+
+
+def get_scores(conn: sqlite3.Connection, item_id: int) -> list[Score]:
+    return [Score(r["source"], r["value"], r["max_value"], r["url"]) for r in conn.execute(
+        "SELECT * FROM scores WHERE item_id=? ORDER BY source", (item_id,))]
+
+
+def set_completed(conn: sqlite3.Connection, item_ids: list[int], done: bool) -> None:
+    conn.executemany(
+        "UPDATE items SET completed=?, completed_at=CASE WHEN ? THEN "
+        "COALESCE(completed_at, datetime('now')) END WHERE id=?",
+        [(int(done), int(done), i) for i in item_ids],
+    )
+
+
+def category_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    rows = conn.execute(
+        f"SELECT category, COUNT(*) n FROM ({ITEM_SELECT}) GROUP BY category"
+    )
+    return {r["category"]: r["n"] for r in rows}
+
+
+def platform_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    rows = conn.execute(
+        f"SELECT COALESCE(platform, '{UNKNOWN_PLATFORM}') p,COUNT(*) n FROM ({ITEM_SELECT}) "
+        "WHERE category='game' GROUP BY p ORDER BY p"
+    )
+    return {r["p"]: r["n"] for r in rows}

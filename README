@@ -1,0 +1,159 @@
+Tracking
+========
+
+A desktop library for your anime, movies and games, spread over any number of
+folders and drives. It scans them, sorts everything into Anime / Movies / Games
+(games are split by platform: PC, PS1-PS5, Saturn, Dreamcast, Switch, ...), and
+shows a poster wall with ratings and total time:
+
+  * Anime  - AniDB, MyAnimeList, AniList, Kitsu, Trakt; total runtime of all episodes
+  * Movies - IMDb, Rotten Tomatoes, Metacritic, TMDB, Trakt; total runtime
+  * Games  - Metacritic, OpenCritic, IGDB, Steam reviews, RAWG, HLTB users;
+             HowLongToBeat main / main+extras / completionist hours
+
+The card shows one headline rating (AniDB / IMDb / Metacritic first, falling back
+to whatever is available); the item page shows every score.
+
+Click any item to open its page: mark it as watched / beaten, read the summary,
+see every score, edit the title / category / platform / year, and keep notes.
+
+
+Running
+-------
+
+    run.bat        starts dist\Tracking\Tracking.exe (builds it first if it's missing)
+    build.bat      builds a fresh Tracking.exe and runs its self-test
+
+The build (build.ps1 + packaging\Tracking.spec, using PyInstaller) creates the
+virtual environment on first use, bundles Python, Qt, MediaInfo and the parsing
+libraries into dist\Tracking\ (~140 MB), and then runs `Tracking.exe --selftest`,
+which checks guessit, MediaInfo, Qt and the rest work inside the exe. Zip the
+dist\Tracking folder to move it to another PC; no Python needed there. Rebuild
+after changing the code.
+
+From source, without building:
+
+    python -m venv .venv
+    .venv\Scripts\pip install -r requirements.txt
+    .venv\Scripts\python -m tracking
+
+On first start the Locations window opens. Add a whole drive or a folder, pick
+what it contains (or leave "Auto-detect"), and it is scanned right away.
+
+No key needed (always on):
+
+  * Anime: MyAnimeList (Jikan), AniList, Kitsu
+  * Games: HowLongToBeat (times, covers), Steam reviews + Metacritic for PC games
+  * Movies: IMDb posters and links (no rating without a key)
+
+Free keys, entered under Settings (one tab per category):
+
+  * OMDb key             IMDb / Rotten Tomatoes / Metacritic   https://www.omdbapi.com/apikey.aspx
+  * TMDB key or token    TMDB score, better posters            https://www.themoviedb.org/settings/api
+  * Trakt Client ID      Trakt score (movies + anime)          https://trakt.tv/oauth/applications/new
+  * AniDB client + ver.  AniDB score                           https://anidb.net/software/add
+  * RAWG key             Metacritic, description              https://rawg.io/apidocs
+  * IGDB (Twitch) ID +   IGDB critic/user scores, covers,      https://dev.twitch.tv/console/apps
+    secret               great for retro consoles
+  * OpenCritic key       OpenCritic score (via RapidAPI)       https://rapidapi.com (OpenCritic API)
+
+
+Where things are stored
+-----------------------
+
+Everything lives in %LOCALAPPDATA%\Tracking (override with TRACKING_DATA_DIR):
+
+    library.sqlite3   all items, scores, completion state, notes, locations
+    posters\          downloaded cover art / thumbnails, one file per item
+    cache\            cached API responses (keeps us within rate limits)
+
+A cover.jpg / folder.jpg / poster.jpg inside an item's folder is used instead
+of downloading one.
+
+
+Drives are tracked by id, not by letter
+---------------------------------------
+
+Each location is stored as (volume id, path inside the volume):
+
+  * local disks: the Windows volume GUID, plus the filesystem serial number so the
+    same disk is recognised on another PC; disks without a drive letter work too
+  * mapped network drives: the UNC share (\\nas\media)
+  * Linux: the filesystem UUID
+
+So a USB disk that comes back as F: instead of E: keeps all its items.
+
+
+Items are not tied to a drive
+-----------------------------
+
+  * Unplugged drive: its items stay, shown dimmed as "drive offline".
+  * Removed location: you choose to keep its items (default) or remove them.
+  * Moved files: when an item that disappeared shows up on another drive or
+    folder, the existing entry is re-linked, keeping its completed state and notes.
+  * Rescan (F5) lets you pick locations and has an option
+    "Mark items that are no longer found as completed", for when you delete
+    things after finishing them. Missing items are never deleted.
+
+Filters: "Hide completed" and "Hide missing" next to the search box.
+
+
+How folders are recognised
+--------------------------
+
+  * Folders named Anime / Movies / Films / Games / ROMs are containers.
+  * Platform folders are containers too: "PS2", "PC Games", "Saturn ISOs",
+    "Sony - PlayStation 3", "Nintendo 64", ...
+  * Anything else inside a container is one item (a series, a movie, a game).
+  * Loose files are grouped by title, so "Game (Disc 1).cue" + "(Disc 2)" or
+    "[Group] Show - 01..24.mkv" become one item.
+  * With no folder hints, contents decide: ROM extensions, disc headers
+    (Saturn, Dreamcast, PS1/PS2/PSP/PS3, GameCube, Wii), PS3_GAME folders, .exe
+    for PC, and fansub-style names for anime.
+
+  * Platform for ambiguous files (.iso, .bin, .chd, .pkg, .zip/.7z/.rar), in order:
+    platform folder > ROM extension > release tags in the name ("[FitGirl PC Repack]"
+    -> PC, a Switch title id like [01004E90149AA000] -> Switch, "(PS2)") > .exe
+    present (PC) > disc header > platform words anywhere in the path ("ps2 isos").
+    Archives with no platform hint at all are skipped.
+  * Video that looks like a TV series without anime markers (Bad.Sisters.S01...)
+    goes to "Unknown"; move it wherever you like.
+  * A folder with any name ("tpex") holding 3+ releases is treated as a container.
+  * Disc / store serials in names give the platform (BCES/BLUS/NPEB -> PS3,
+    ULUS -> PSP, CUSA -> PS4); Redump region tags "(USA)" and GOG-Games names
+    ("game-title-(12345)") mark archives as games.
+  * Updates, patches and DLC ("X.Update.v1.2-RUNE", Switch ids ending in 800,
+    "DLC Pack" folders) are counted under their game, not listed on their own.
+  * Two copies of the same game or movie are one item (a movie's runtime counts once).
+  * ROMs of a different game dropped inside a game folder become their own item.
+  * Skipped: macOS "._" files, scrambled names, firmware / key dumps / emulators.
+
+Anime grouping:
+
+  * One item per series + season: a folder with "Season 1" / "Season 2" (or
+    S01Exx / S02Exx files) becomes two items; specials join season 1.
+  * Episodes of one show spread over a folder and loose files are merged, so the
+    episode count and total runtime cover all of them.
+  * Anime movies (no episode number) are separate items, never merged into a series.
+  * Extras folders (NCOP/NCED, menus, trailers, ...) don't count as episodes.
+
+Anything it gets wrong can be fixed on the item page or with right-click > Move to.
+Select several cards (Ctrl/Shift+click, Ctrl+A) to move, complete or refetch them
+in bulk from the bar above the grid. Each item page shows why it was detected the
+way it was.
+
+
+Logs
+----
+
+Logs go to %LOCALAPPDATA%\Tracking\logs\tracking.log (rotated, 5 x 2 MB). Pick the
+level in Settings > General: DEBUG explains every classification decision and
+every service match (use it when something is misdetected), INFO gives scan and
+fetch summaries. The Log button shows recent lines with level and text filters.
+
+
+Tests
+-----
+
+    .venv\Scripts\pip install pytest
+    .venv\Scripts\python -m pytest
