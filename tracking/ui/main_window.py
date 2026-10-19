@@ -356,6 +356,20 @@ class MainWindow(QMainWindow):
         self._show_progress("Working…")
         self.pool.start(job)
 
+    def closeEvent(self, event):
+        """Stop background work on close; otherwise the process would linger
+        invisibly until a long metadata fetch finished. Finished items are
+        already saved; "Update metadata" picks up the rest next time."""
+        self.queue.clear()
+        if self.job:
+            self.job.cancel()
+            self.status.setText("Stopping…")
+            QApplication.processEvents()
+            # Jobs check for cancel between items; one item can take a few
+            # seconds (rate limits, a slow drive), never more than a request timeout.
+            self.pool.waitForDone(35_000)
+        super().closeEvent(event)
+
     def _show_progress(self, text: str):
         self.status_text = text
         waiting = f"   (+{len(self.queue)} queued)" if self.queue else ""
