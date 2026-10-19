@@ -6,6 +6,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QApplication
 
+from .. import categories
+
 
 class Palette:
     bg = QColor("#14161b")
@@ -26,12 +28,8 @@ def current() -> Palette:
 
 
 def category_gradient(category: str) -> tuple[QColor, QColor]:
-    return {
-        "anime": (QColor("#7b3fe4"), QColor("#2b1659")),
-        "movie": (QColor("#d9822b"), QColor("#4a2408")),
-        "game": (QColor("#1f9d74"), QColor("#0b3a2c")),
-        "unknown": (QColor("#6b7280"), QColor("#262a33")),
-    }.get(category, (QColor("#555"), QColor("#222")))
+    c1, c2 = categories.get(category).colors
+    return QColor(c1), QColor(c2)
 
 
 def rating_color(rating: float | None, rating_max: float | None) -> QColor:
@@ -62,6 +60,8 @@ QToolTip { background: #1b1e25; color: #e8e9ed; border: 1px solid #2a2e38; }
 #Muted { color: #9096a3; }
 #Big { font-size: 13pt; font-weight: 600; }
 #ItemPage { background: #14161b; }
+QTableWidget#Episodes { background: #1b1e25; border: 1px solid #2a2e38; border-radius: 8px; }
+QTableWidget#Episodes::item { padding: 2px 6px; }
 #BulkBar { background: #1d2a45; border: 1px solid #3b6ef5; border-radius: 8px; }
 #LogView { font-family: Consolas, monospace; font-size: 9pt; background: #101216; }
 #PageTitle { font-size: 24pt; font-weight: 700; }
@@ -110,7 +110,7 @@ def draw_icon(size: int = 256) -> QPixmap:
     p.setPen(Qt.NoPen)
     p.setBrush(bg)
     p.drawRoundedRect(QRectF(8 * s, 8 * s, 240 * s, 240 * s), 52 * s, 52 * s)
-    cards = [("anime", -14, 62, 70), ("movie", 0, 128, 58), ("game", 14, 194, 70)]
+    cards = [("anime", -14, 62, 70), ("movie", 0, 128, 58), ("game", 14, 194, 70)]  # icon art
     for cat, angle, cx, top in cards:
         c1, c2 = category_gradient(cat)
         g = QLinearGradient(0, 0, 0, 120 * s)

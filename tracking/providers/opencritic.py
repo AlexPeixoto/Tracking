@@ -6,7 +6,10 @@ OpenCritic's API is served through RapidAPI: subscribe to "OpenCritic API"
 
 from __future__ import annotations
 
-from .base import Metadata, ProviderError, RateLimiter, ScoreEntry, best_match, cached_json, session
+from .base import (
+    Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, Setting, best_match, cached_json,
+    session,
+)
 
 HOST = "opencritic-api.p.rapidapi.com"
 API_URL = f"https://{HOST}"
@@ -26,7 +29,7 @@ def _get(path: str, key: str, params: dict | None = None):
     return r.json()
 
 
-def lookup(title: str, key: str) -> Metadata | None:
+def _search(title: str, key: str) -> Metadata | None:
     if not key:
         return None
     found = cached_json("opencritic", f"search-{title.lower()}", 30,
@@ -45,3 +48,16 @@ def lookup(title: str, key: str) -> Metadata | None:
         scores.append(ScoreEntry("OpenCritic % rec.", round(game["percentRecommended"]), 100, url))
     return Metadata(title=game.get("name"), external_url=url,
                     summary=game.get("description") or None, scores=scores)
+
+
+def lookup(q: Query) -> Metadata | None:
+    return _search(q.title, q.setting("opencritic_key"))
+
+
+PROVIDER = Provider(
+    "opencritic", "OpenCritic", frozenset({"game"}), lookup,
+    settings=(Setting("opencritic_key", "OpenCritic RapidAPI key",
+                      "OpenCritic score and % recommended. Subscribe to “OpenCritic API” (free "
+                      "tier) on rapidapi.com."),),
+    required=("opencritic_key",), cover_rank=60,
+)

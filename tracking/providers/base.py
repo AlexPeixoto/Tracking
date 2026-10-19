@@ -7,8 +7,9 @@ import json
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Callable, Mapping
 
 import requests
 from rapidfuzz import fuzz
@@ -32,9 +33,11 @@ class ScoreEntry:
 
 @dataclass
 class Metadata:
+    """What one service knows about a title. Providers fill what they have;
+    enrich.combine merges several and picks the headline rating from ``scores``."""
     title: str | None = None
     year: int | None = None
-    rating: float | None = None
+    rating: float | None = None          # set by enrich.combine, not by providers
     rating_max: float | None = None
     rating_source: str | None = None
     external_id: str | None = None
@@ -45,6 +48,81 @@ class Metadata:
     hltb_extra: float | None = None
     hltb_complete: float | None = None
     scores: list[ScoreEntry] = field(default_factory=list)
+
+
+@dataclass
+class Episode:
+    """One episode as a service lists it, with its score if it has one."""
+    season: int
+    number: int
+    title: str | None = None
+    aired: str | None = None         # YYYY-MM-DD
+    runtime_min: float | None = None
+    score: float | None = None
+    score_max: float = 10
+    url: str | None = None
+    note: str | None = None          # "filler", "recap", ...
+
+
+@dataclass(frozen=True)
+class Query:
+    """Everything a provider may use to find an item."""
+    title: str
+    year: int | None = None
+    category: str = ""
+    kind: str | None = None          # "series" | "movie" for video, None for games
+    platform: str | None = None      # games
+    season: int | None = None        # episodic items: which season this item is
+    settings: Mapping[str, str] = field(default_factory=dict)
+
+    def setting(self, key: str) -> str:
+        return (self.settings.get(key) or "").strip()
+
+    def with_title(self, title: str) -> "Query":
+        return replace(self, title=title)
+
+
+@dataclass(frozen=True)
+class Setting:
+    """A value the user enters in Settings (API key, client id...)."""
+    key: str
+    label: str
+    help: str = ""
+    secret: bool = True
+
+
+@dataclass(frozen=True)
+class Provider:
+    """One metadata service. Register it in providers/__init__.py.
+
+    ``lookup`` returns None for "no match". It may raise ProviderError for
+    problems worth telling the user about (bad key, rate limit).
+    """
+    name: str                                   # id used in logs and cover priority
+    label: str                                  # shown in Settings ("TVmaze")
+    categories: frozenset[str]
+    lookup: Callable[[Query], "Metadata | None"]
+    settings: tuple[Setting, ...] = ()          # shown in Settings for its categories
+    required: tuple[str, ...] = ()              # setting keys it can't work without
+    cover_rank: int = 50                        # lower = its cover art is preferred
+    applies: Callable[[Query], bool] = lambda q: True
+    # Optional: list the episodes of the title ``lookup`` found, given its
+    # Metadata.external_id. Services earlier in the registry are asked first.
+    episodes: "Callable[[Query, str], list[Episode]] | None" = None
+
+    def configured(self, q: Query) -> bool:
+        return all(q.setting(k) for k in self.required)
+
+
+def media_format_bonus(fmt: str | None, kind: str | None) -> float:
+    """Steer anime / TV matches towards the right format: an anime movie should
+    match AniList's MOVIE entry, a series its TV entry."""
+    fmt = (fmt or "").upper().replace(" ", "_")
+    if kind == "movie":
+        return 8 if fmt == "MOVIE" else -5
+    if kind == "series":
+        return 3 if fmt in {"TV", "TV_SHORT", "ONA", "OVA", "SPECIAL"} else -8 if fmt == "MOVIE" else 0
+    return 3 if fmt == "TV" else 0
 
 
 _session_lock = threading.Lock()
@@ -112,6 +190,14 @@ def best_match(title: str, year: int | None, candidates, names, cand_year=lambda
         if score > best_score:
             best, best_score = c, score
     return best if best is not None and best_score >= threshold else None
+
+
+def platform_matches(want: str | None, names) -> bool:
+    """Is our platform (in the service's spelling) among a result's platforms?"""
+    if not want:
+        return False
+    w = titles.normalize(want)
+    return any(titles.normalize(n or "") == w for n in names)
 
 
 def year_of(date: str | None) -> int | None:

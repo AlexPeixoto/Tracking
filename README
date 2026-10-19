@@ -1,21 +1,25 @@
 Tracking
 ========
 
-A desktop library for your anime, movies and games, spread over any number of
-folders and drives. It scans them, sorts everything into Anime / Movies / Games
+A desktop library for your anime, movies, TV shows and games, spread over any
+number of folders and drives. It scans them, sorts everything into Anime / Movies /
+TV Shows / Games
 (games are split by platform: PC, PS1-PS5, Saturn, Dreamcast, Switch, ...), and
 shows a poster wall with ratings and total time:
 
   * Anime  - AniDB, MyAnimeList, AniList, Kitsu, Trakt; total runtime of all episodes
   * Movies - IMDb, Rotten Tomatoes, Metacritic, TMDB, Trakt; total runtime
+  * TV     - IMDb, TMDB, TVmaze, Trakt; total runtime of all episodes, one item per season
   * Games  - Metacritic, OpenCritic, IGDB, Steam reviews, RAWG, HLTB users;
              HowLongToBeat main / main+extras / completionist hours
 
-The card shows one headline rating (AniDB / IMDb / Metacritic first, falling back
-to whatever is available); the item page shows every score.
+Each card shows every site's score as small chips plus a "★" average (all scores
+scaled to 0-10); sort by "Score: average" or "Score: highest".
 
-Click any item to open its page: mark it as watched / beaten, read the summary,
-see every score, edit the title / category / platform / year, and keep notes.
+Click any item to open its page: mark it as watched / beaten, see every score,
+the episode list with per-episode scores (TV: TVmaze, or TMDB with a key; anime:
+MyAnimeList, or AniDB with a client) and which episodes are on disk, read the
+summary, edit the title / category / platform / year, and keep notes.
 
 
 Running
@@ -44,6 +48,7 @@ No key needed (always on):
 
   * Anime: MyAnimeList (Jikan), AniList, Kitsu
   * Games: HowLongToBeat (times, covers), Steam reviews + Metacritic for PC games
+  * TV: TVmaze (rating, poster, summary), IMDb posters and links
   * Movies: IMDb posters and links (no rating without a key)
 
 Free keys, entered under Settings (one tab per category):
@@ -70,9 +75,11 @@ Everything lives in %LOCALAPPDATA%\Tracking (override with TRACKING_DATA_DIR):
 A cover.jpg / folder.jpg / poster.jpg inside an item's folder is used instead
 of downloading one.
 
-Backup / moving: Settings > General > "Back up..." writes one .zip (the library
-plus all covers; safe while the app is running). To restore or move to another
-PC, close Tracking and unzip it into the data folder ("Open data folder" there).
+Export / import: Settings > General > "Export..." writes one .zip, either the
+database only (tiny) or database + cover images. API keys are left out unless you
+tick the box, so an export is safe to share. "Import..." either replaces your
+library with an export or adds its items to yours (your edits and notes win; an
+item counts as completed if either copy is; your API keys are kept).
 
 Portable mode: create a folder named "data" next to Tracking.exe and the app
 keeps its library there instead, so the exe and its data travel together
@@ -129,8 +136,10 @@ How folders are recognised
     -> PC, a Switch title id like [01004E90149AA000] -> Switch, "(PS2)") > .exe
     present (PC) > disc header > platform words anywhere in the path ("ps2 isos").
     Archives with no platform hint at all are skipped.
-  * Video that looks like a TV series without anime markers (Bad.Sisters.S01...)
-    goes to "Unknown"; move it wherever you like.
+  * Video with episode numbers but no anime markers (Bad.Sisters.S01...) goes to
+    TV Shows, as do folders named TV / TV Shows / Series / Shows. Seasons and
+    scattered episodes are grouped the same way as anime (below).
+  * "Unknown" holds whatever you move there yourself.
   * A folder with any name ("tpex") holding 3+ releases is treated as a container.
   * Disc / store serials in names give the platform (BCES/BLUS/NPEB -> PS3,
     ULUS -> PSP, CUSA -> PS4); Redump region tags "(USA)" and GOG-Games names
@@ -164,6 +173,8 @@ level in Settings > General: DEBUG explains every classification decision and
 every service match (use it when something is misdetected), INFO gives scan and
 fetch summaries. The Log button shows recent lines with level and text filters.
 
+
+Code layout and how to add a service, section or platform: docs/ARCHITECTURE.md
 
 Tests
 -----

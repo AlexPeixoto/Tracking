@@ -13,6 +13,8 @@ import os
 import re
 from dataclasses import dataclass, replace
 
+from .. import platforms
+
 VIDEO_EXT = {
     ".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".m2ts", ".webm",
     ".flv", ".mpg", ".mpeg", ".ogm", ".rmvb", ".divx", ".vob",
@@ -131,54 +133,16 @@ SKIP_DIRS = {
     "lost+found", ".trash", ".trashes", "@eadir", "#recycle", ".git",
 }
 
-# Folder name -> platform. Short keys must match the whole folder name; long
-# keys may appear inside it ("Sony - PlayStation 2", "PS2 Games").
-PLATFORM_KEYS = {
-    "pc": "PC", "pcgames": "PC", "windows": "PC", "steam": "PC", "gog": "PC",
-    "ps1": "PS1", "psx": "PS1", "psone": "PS1", "playstation": "PS1", "playstation1": "PS1",
-    "ps2": "PS2", "playstation2": "PS2",
-    "ps3": "PS3", "playstation3": "PS3",
-    "ps4": "PS4", "playstation4": "PS4",
-    "ps5": "PS5", "playstation5": "PS5",
-    "psp": "PSP", "playstationportable": "PSP",
-    "vita": "PS Vita", "psvita": "PS Vita", "playstationvita": "PS Vita",
-    "saturn": "Saturn", "segasaturn": "Saturn",
-    "dreamcast": "Dreamcast", "segadreamcast": "Dreamcast",
-    "megadrive": "Mega Drive", "genesis": "Mega Drive", "segagenesis": "Mega Drive",
-    "segacd": "Sega CD", "megacd": "Sega CD",
-    "mastersystem": "Master System", "gamegear": "Game Gear", "sega32x": "32X",
-    "nes": "NES", "famicom": "NES", "snes": "SNES", "superfamicom": "SNES",
-    "supernintendo": "SNES", "n64": "N64", "nintendo64": "N64",
-    "gamecube": "GameCube", "ngc": "GameCube", "wii": "Wii", "wiiu": "Wii U",
-    "switch": "Switch", "nintendoswitch": "Switch",
-    "gb": "Game Boy", "gameboy": "Game Boy", "gbc": "Game Boy Color",
-    "gameboycolor": "Game Boy Color", "gba": "GBA", "gameboyadvance": "GBA",
-    "nds": "DS", "ds": "DS", "nintendods": "DS", "3ds": "3DS", "nintendo3ds": "3DS",
-    "xbox": "Xbox", "xbox360": "Xbox 360", "x360": "Xbox 360", "xboxone": "Xbox One",
-    "pcengine": "PC Engine", "turbografx": "PC Engine", "turbografx16": "PC Engine",
-    "neogeo": "Neo Geo", "arcade": "Arcade", "mame": "Arcade",
-    "virtualboy": "Virtual Boy", "ngp": "Neo Geo Pocket", "neogeopocket": "Neo Geo Pocket",
-    "wonderswan": "WonderSwan", "atari2600": "Atari 2600", "lynx": "Atari Lynx",
-    "jaguar": "Atari Jaguar", "c64": "Commodore 64", "amiga": "Amiga", "3do": "3DO",
-    "zxspectrum": "ZX Spectrum", "msx": "MSX", "pcfx": "PC-FX",
-    "sw": "Switch", "nsw": "Switch",
-}
-# Platform words that are safe to spot *inside* longer names and paths
-# ("Okami (PS2).iso", "D:/stuff/ps2 isos/..."). Everyday words like "switch",
-# "genesis" or "arcade" are left out; they only count as whole folder names.
-_TOKEN_PLATFORMS = {k: v for k, v in PLATFORM_KEYS.items() if k in {
-    "ps1", "psx", "ps2", "ps3", "ps4", "ps5", "psp", "psvita", "playstation1", "playstation2",
-    "playstation3", "playstation4", "playstation5", "segasaturn", "dreamcast", "megadrive",
-    "segacd", "megacd", "segagenesis", "snes", "n64", "nintendo64", "gamecube", "ngc", "wiiu",
-    "nintendoswitch", "gameboy", "gbc", "gba", "gameboyadvance", "nds", "3ds", "nintendo3ds",
-    "xbox360", "x360", "xboxone", "pcengine", "turbografx16", "neogeo", "mame", "nes",
-    "famicom", "superfamicom", "wii", "saturn", "psone",
-}}
+# Folder name -> platform, and the aliases safe inside longer names: see platforms.py.
+PLATFORM_KEYS = platforms.FOLDER_ALIASES
+_TOKEN_PLATFORMS = platforms.TOKEN_ALIASES
 CATEGORY_KEYS = {
     "anime": "anime", "animes": "anime", "animation": "anime", "animemovies": "anime",
     "animeseries": "anime", "tvanime": "anime",
     "movies": "movie", "movie": "movie", "films": "movie", "film": "movie", "filmes": "movie",
     "cinema": "movie",
+    "tv": "tv", "tvshows": "tv", "tvseries": "tv", "series": "tv", "shows": "tv",
+    "television": "tv", "seriados": "tv", "seriestv": "tv",
     "games": "game", "game": "game", "jogos": "game", "roms": "game", "isos": "game",
     "emulation": "game", "pcgames": "game", "videogames": "game",
 }
@@ -266,8 +230,8 @@ class Hints:
     def child(self, folder_name: str) -> tuple["Hints", bool]:
         """Hints for a sub-folder, and whether the folder name itself was a keyword."""
         # Inside a platform folder, sub-folders are game titles, not more platforms.
-        # Inside an anime / movie folder, a title like "Saturn" is just a title.
-        video_ctx = self.category in ("anime", "movie")
+        # Inside an anime / movie / TV folder, a title like "Saturn" is just a title.
+        video_ctx = self.category in ("anime", "movie", "tv")
         plat = None if (self.platform or video_ctx) else platform_from_name(folder_name)
         cat = category_from_name(folder_name)
         h = self
@@ -409,7 +373,7 @@ def inspect_files(files: list[tuple[str, str]]) -> ContentSignals:
 
 @dataclass
 class Decision:
-    category: str            # anime | movie | game | unknown
+    category: str            # anime | movie | tv | game | unknown
     platform: str | None
     reason: str              # human-readable, shown in the log and on the item page
 
@@ -449,10 +413,10 @@ def decide(hints: Hints, sig: ContentSignals, name_platform: str | None = None,
             return None
         plat, why = game_platform()
         return Decision("game", plat, f"inside a games folder; {why}")
-    if hints.category in ("anime", "movie"):
+    if hints.category in ("anime", "movie", "tv"):
         if sig.videos:
             if hints.category == "movie" and sig.episodic and not sig.anime_like:
-                return Decision("unknown", None, "episodes inside a Movies folder (TV series?)")
+                return Decision("tv", None, "episodes inside a Movies folder")
             return Decision(hints.category, None, f"video files inside {hints.category} folder")
         if has_game:
             plat, why = game_platform()
@@ -466,6 +430,6 @@ def decide(hints: Hints, sig: ContentSignals, name_platform: str | None = None,
         if sig.anime_like and sig.anime_like * 2 >= sig.videos:
             return Decision("anime", None, "fansub-style file names")
         if sig.episodic and sig.episodic * 2 >= sig.videos:
-            return Decision("unknown", None, "episodic video without anime markers (TV series?)")
+            return Decision("tv", None, "episodic video without anime markers")
         return Decision("movie", None, "video file(s) without episode numbers")
     return None

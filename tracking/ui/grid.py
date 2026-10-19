@@ -6,7 +6,7 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, QRect, QRectF, QSize
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
-from .. import db, paths
+from .. import db, paths, scores as score_math
 from . import theme
 
 CARD_W, POSTER_H, TEXT_H = 168, 240, 58
@@ -167,21 +167,8 @@ class CardDelegate(QStyledItemDelegate):
             p.fillRect(poster_rect, QColor(0, 0, 0, 140))
         p.setClipping(False)
 
-        # Rating badge, top-right
-        rating = fmt_rating(item)
-        if rating:
-            f = QFont(option.font)
-            f.setBold(True)
-            f.setPointSizeF(option.font.pointSizeF() * 0.95)
-            p.setFont(f)
-            text = f"{item.rating_source or ''} {rating}".strip()
-            tw = p.fontMetrics().horizontalAdvance(text) + 14
-            badge = QRectF(poster_rect.right() - tw - 6, poster_rect.y() + 6, tw, 22)
-            p.setPen(Qt.NoPen)
-            p.setBrush(theme.rating_color(item.rating, item.rating_max))
-            p.drawRoundedRect(badge, 6, 6)
-            p.setPen(QColor("#111"))
-            p.drawText(badge, Qt.AlignCenter, text)
+        if item.scores:
+            self._score_chips(p, option, poster_rect, item)
 
         if item.completed:
             badge = QRectF(poster_rect.x() + 8, poster_rect.y() + 8, 26, 26)
@@ -197,8 +184,7 @@ class CardDelegate(QStyledItemDelegate):
         if dimmed:
             p.setFont(option.font)
             p.setPen(QColor("#eee"))
-            p.drawText(poster_rect.adjusted(0, 0, 0, -10), Qt.AlignHCenter | Qt.AlignBottom,
-                       "missing" if item.missing else "drive offline")
+            p.drawText(poster_rect, Qt.AlignCenter, "missing" if item.missing else "drive offline")
 
         # Selection / hover outline
         if selected or hovered:
@@ -230,11 +216,60 @@ class CardDelegate(QStyledItemDelegate):
             meta.insert(0, "Movie")
         elif item.video_count > 1:
             meta.insert(0, f"{item.video_count} eps")
+        if item.avg_score is not None:
+            meta.insert(0, f"★ {item.avg_score / 10:.1f}")  # average of all scores, out of 10
         p.setFont(option.font)
         p.setPen(pal.text_muted)
         p.drawText(QRect(text_rect.x(), y + 1, CARD_W, fm.height()), Qt.AlignLeft,
                    "  ·  ".join(m for m in meta if m))
         p.restore()
+
+    @staticmethod
+    def _score_chips(p: QPainter, option, poster: QRect, item: db.Item) -> None:
+        """Every score as a small coloured chip along the bottom of the poster
+        (best-known first), wrapping onto a second row if needed."""
+        f = QFont(option.font)
+        f.setBold(True)
+        f.setPointSizeF(option.font.pointSizeF() * 0.8)
+        p.setFont(f)
+        fm = p.fontMetrics()
+        h, gap, pad = fm.height() + 4, 4, 6
+        chips = [(f"{score_math.SHORT.get(s.source, s.source)} {score_math.fmt(s)}", s)
+                 for s in item.scores]
+        rows: list[list] = [[]]
+        width = 0
+        for text, s in chips:
+            w = fm.horizontalAdvance(text) + 2 * pad
+            if rows[-1] and width + w > poster.width() - 2 * pad:
+                if len(rows) == 2:
+                    break
+                rows.append([])
+                width = 0
+            rows[-1].append((text, s, w))
+            width += w + gap
+        # Darken the bottom of the poster so chips read on any artwork.
+        band = len(rows) * (h + gap) + 2 * gap
+        shade = QLinearGradient(0, poster.bottom() - band - 16, 0, poster.bottom())
+        shade.setColorAt(0, QColor(0, 0, 0, 0))
+        shade.setColorAt(1, QColor(0, 0, 0, 200))
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(poster), 10, 10)
+        p.save()
+        p.setClipPath(clip)
+        p.fillRect(QRect(poster.x(), poster.bottom() - band - 16, poster.width(), band + 17), shade)
+        p.restore()
+        y = poster.bottom() - band + gap
+        for row in rows:
+            x = poster.x() + pad
+            for text, s, w in row:
+                chip = QRectF(x, y, w, h)
+                p.setPen(Qt.NoPen)
+                p.setBrush(theme.rating_color(s.value, s.max_value))
+                p.drawRoundedRect(chip, 5, 5)
+                p.setPen(QColor("#111"))
+                p.drawText(chip, Qt.AlignCenter, text)
+                x += w + gap
+            y += h + gap
 
     @staticmethod
     def _wrap(text: str, fm, width: int) -> list[str]:

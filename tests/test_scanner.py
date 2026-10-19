@@ -3,8 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from tracking import classify, db, scanner, titles
-from tracking.classify import Hints
+from tracking import db, scan, titles
+from tracking.scan import classify
+from tracking.scan.classify import Hints
 
 
 def touch(root: Path, rel: str, data: bytes = b"x") -> None:
@@ -13,8 +14,8 @@ def touch(root: Path, rel: str, data: bytes = b"x") -> None:
     p.write_bytes(data)
 
 
-def scan(root: Path):
-    return {i.rel_path: i for i in scanner.walk(str(root), "", Hints())}
+def scan_tree(root: Path):
+    return {i.rel_path: i for i in scan.walk(str(root), "", Hints())}
 
 
 def test_platform_names():
@@ -46,7 +47,7 @@ def test_layout(tmp_path: Path):
     touch(tmp_path, "Games/PC/Hades/Hades.exe")
     touch(tmp_path, "Documents/notes.txt")
 
-    items = scan(tmp_path)
+    items = scan_tree(tmp_path)
     bebop = items["Anime/[Grp] Cowboy Bebop"]
     assert (bebop.category, bebop.title, len(bebop.videos)) == ("anime", "Cowboy Bebop", 2)
 
@@ -68,7 +69,7 @@ def test_auto_detect_without_folder_hints(tmp_path: Path):
     header = b"SEGA SEGASATURN " + b"\0" * 64
     touch(tmp_path, "Stuff/Nights into Dreams/nights.bin", header)
     touch(tmp_path, "Stuff/Some Show/[Sub] Some Show - 01.mkv")
-    items = {i.rel_path: i for i in scanner.walk(str(tmp_path / "Stuff"), "Stuff", Hints())}
+    items = {i.rel_path: i for i in scan.walk(str(tmp_path / "Stuff"), "Stuff", Hints())}
     assert items["Stuff/Nights into Dreams"].platform == "Saturn"
     assert items["Stuff/Some Show"].category == "anime"
 
@@ -85,11 +86,11 @@ def test_rescan_marks_missing_completed(tmp_path: Path, conn):
     lib = tmp_path / "lib"
     touch(lib, "Movies/Heat (1995)/Heat.1995.mkv")
     touch(lib, "Movies/Arrival (2016)/Arrival.2016.mkv")
-    rid = scanner.add_root(conn, str(lib))
-    scanner.scan_root(conn, rid)
+    rid = scan.add_root(conn, str(lib))
+    scan.scan_root(conn, rid)
     shutil.rmtree(lib / "Movies" / "Heat (1995)")
 
-    res = scanner.scan_root(conn, rid, missing_completed=True)
+    res = scan.scan_root(conn, rid, missing_completed=True)
     assert res.missing == 1
     items = {i.title: i for i in db.list_items(conn)}
     assert items["Heat"].missing and items["Heat"].completed and items["Heat"].completed_at
@@ -99,8 +100,8 @@ def test_rescan_marks_missing_completed(tmp_path: Path, conn):
 def test_items_survive_location_removal_and_follow_moves(tmp_path: Path, conn):
     lib = tmp_path / "lib"
     touch(lib, "Games/PS2/Okami (USA).iso")
-    rid = scanner.add_root(conn, str(lib / "Games"))
-    scanner.scan_root(conn, rid)
+    rid = scan.add_root(conn, str(lib / "Games"))
+    scan.scan_root(conn, rid)
     okami = db.list_items(conn)[0]
     db.set_completed(conn, [okami.id], True)
     conn.execute("UPDATE items SET notes='great' WHERE id=?", (okami.id,))
@@ -112,8 +113,8 @@ def test_items_survive_location_removal_and_follow_moves(tmp_path: Path, conn):
     # The file shows up somewhere else: same entry, new path, state kept.
     (lib / "Games" / "PS2" / "Okami (USA).iso").unlink()
     touch(lib, "Backup/PS2/Okami (USA).iso")
-    rid2 = scanner.add_root(conn, str(lib / "Backup"), "game")
-    scanner.scan_root(conn, rid2)
+    rid2 = scan.add_root(conn, str(lib / "Backup"), "game")
+    scan.scan_root(conn, rid2)
     items = db.list_items(conn)
     assert len(items) == 1 and items[0].id == okami.id
     assert items[0].rel_path.endswith("Backup/PS2/Okami (USA).iso")
@@ -123,7 +124,7 @@ def test_items_survive_location_removal_and_follow_moves(tmp_path: Path, conn):
 # --- grouping ----------------------------------------------------------------
 
 def items_by_title(root: Path, hints=Hints()):
-    return {i.title: i for i in scanner.collect(str(root), "", hints)}
+    return {i.title: i for i in scan.collect(str(root), "", hints)}
 
 
 def test_scattered_episodes_merge_into_one_series(tmp_path: Path):
@@ -161,13 +162,14 @@ def test_anime_movie_with_crc_is_not_a_series(tmp_path: Path):
     assert items["Vampire Hunter D: Bloodlust"].year == 2000
 
 
-def test_live_action_tv_goes_to_unknown(tmp_path: Path):
+def test_live_action_tv_goes_to_tv(tmp_path: Path):
     for ep in (1, 2, 3):
         touch(tmp_path, f"Bad.Sisters.S01.1080p.WEBRip.x265[eztv.re]/Bad.Sisters.S01E0{ep}.1080p.mkv")
     touch(tmp_path, "Ballerina.From.the.World.of.John.Wick.2025.1080p.WEBRip.AAC5.1.10bits.x265-Rapta/"
                     "Ballerina.2025.1080p.mkv")
     items = items_by_title(tmp_path)
-    assert items["Bad Sisters"].category == "unknown"
+    assert items["Bad Sisters"].category == "tv"
+    assert items["Bad Sisters"].kind == "series" and len(items["Bad Sisters"].videos) == 3
     assert items["Ballerina From the World of John Wick"].category == "movie"
     assert items["Ballerina From the World of John Wick"].year == 2025
 
@@ -222,7 +224,7 @@ def test_messy_game_folder(tmp_path: Path):
     touch(tp, "game-chains.of.freedom-(81127)/setup_chains.exe")
     touch(tp, "IePErNcHFCMaNrLDqsH.rar")
 
-    items = scanner.collect(str(tmp_path), "", Hints())
+    items = scan.collect(str(tmp_path), "", Hints())
     got = {(i.title, i.platform): i for i in items}
     assert ("Fatal Frame - Maiden of Black Water", "PC") in got
     zelda = got[("The Legend of Zelda Echoes of Wisdom", "Switch")]
@@ -245,3 +247,16 @@ def test_duplicate_movies_count_runtime_once(tmp_path: Path):
     assert len(items["Alien Romulus"].videos) == 1
     assert items["Alien Romulus"].videos[0].size == 100
     assert "Dune Part Two" in items
+
+
+def test_tv_shows_folder(tmp_path: Path):
+    for s in (1, 2):
+        for ep in (1, 2):
+            touch(tmp_path, f"TV Shows/Severance/Season {s}/Severance.S0{s}E0{ep}.1080p.mkv")
+    touch(tmp_path, "TV Shows/The Bear S03/The.Bear.S03E01.mkv")
+    items = items_by_title(tmp_path)
+    assert {t: (i.category, i.season, len(i.videos)) for t, i in items.items()} == {
+        "Severance": ("tv", 1, 2),
+        "Severance Season 2": ("tv", 2, 2),
+        "The Bear Season 3": ("tv", 3, 1),
+    }

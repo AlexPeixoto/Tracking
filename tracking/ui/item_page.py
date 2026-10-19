@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QComboBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
+    QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from .. import db, paths
-from . import dialogs, theme
+from .. import categories, db, library, platforms
+from . import theme
 from .grid import fmt_hours, posters
 
 POSTER_W, POSTER_H = 300, 430
+
+
+def scores_fmt(e: db.EpisodeRow) -> str:
+    """Episode score as its site shows it: "8.4" (of 10) or "4.5/5" (MAL's poll)."""
+    return f"{e.score:.1f}" if (e.score_max or 10) == 10 else f"{e.score:.1f}/{e.score_max:g}"
 SCORES_PER_ROW = 5
-CATEGORY_NAMES = {"anime": "Anime", "movie": "Movie", "game": "Game", "unknown": "Unknown"}
+
 
 
 def fmt_size(n: float) -> str:
@@ -148,6 +155,28 @@ class ItemPage(QScrollArea):
         time_wrap.setLayout(self.time_grid)
         right.addWidget(time_wrap)
 
+        # Episodes (series only): number, title, score, air date, on disk.
+        self.episodes_title = _section("Episodes")
+        right.addWidget(self.episodes_title)
+        self.episodes_info = QLabel()
+        self.episodes_info.setObjectName("Muted")
+        right.addWidget(self.episodes_info)
+        self.episodes = QTableWidget(0, 5)
+        self.episodes.setObjectName("Episodes")
+        self.episodes.setHorizontalHeaderLabels(["#", "Title", "Score", "Aired", "On disk"])
+        self.episodes.verticalHeader().hide()
+        self.episodes.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.episodes.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.episodes.setShowGrid(False)
+        self.episodes.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        header = self.episodes.horizontalHeader()
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        for col in (0, 2, 3, 4):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        self.episodes.cellDoubleClicked.connect(self._open_episode)
+        self.episodes.setToolTip("Double-click an episode to open its page")
+        right.addWidget(self.episodes)
+
         right.addWidget(_section("Summary"))
         self.summary = QLabel()
         self.summary.setWordWrap(True)
@@ -160,14 +189,14 @@ class ItemPage(QScrollArea):
         form.setLabelAlignment(Qt.AlignRight)
         self.e_title = QLineEdit()
         self.e_category = QComboBox()
-        for k, v in (("anime", "Anime"), ("movie", "Movies"), ("game", "Games"), ("unknown", "Unknown")):
-            self.e_category.addItem(v, k)
+        for c in categories.CATEGORIES:
+            self.e_category.addItem(c.label, c.key)
         self.e_platform = QComboBox()
         self.e_platform.addItem("Unknown", None)
-        for p in dialogs.PLATFORMS:
+        for p in platforms.NAMES:
             self.e_platform.addItem(p, p)
         self.e_category.currentIndexChanged.connect(
-            lambda: self.e_platform.setEnabled(self.e_category.currentData() == "game"))
+            lambda: self.e_platform.setEnabled(categories.get(self.e_category.currentData()).platforms))
         self.e_year = QSpinBox()
         self.e_year.setRange(0, 2100)
         self.e_year.setSpecialValueText("—")
@@ -204,8 +233,9 @@ class ItemPage(QScrollArea):
         self.poster.setPixmap(pm or posters.placeholder(item, POSTER_W, POSTER_H))
 
         self.title.setText(item.title)
-        bits = [CATEGORY_NAMES.get(item.category, item.category)]
-        if item.category == "anime" and item.kind:
+        cat = categories.get(item.category)
+        bits = [cat.singular]
+        if cat.episodic and item.kind:
             bits.append("Movie" if item.kind == "movie" else f"Series · season {item.season or 1}")
         if item.platform:
             bits.append(item.platform)
@@ -229,6 +259,13 @@ class ItemPage(QScrollArea):
             none.setObjectName("Muted")
             self.scores.addWidget(none, 0, 0)
         self.scores.setColumnStretch(SCORES_PER_ROW, 1)
+        if item.scores:
+            summary = QLabel(f"Average <b>{item.avg_score / 10:.1f}</b> · highest "
+                             f"<b>{item.best_score / 10:.1f}</b> (out of 10, from {len(item.scores)} "
+                             f"site{'s' if len(item.scores) > 1 else ''})")
+            summary.setObjectName("Muted")
+            self.scores.addWidget(summary, (len(item.scores) - 1) // SCORES_PER_ROW + 1, 0, 1,
+                                  SCORES_PER_ROW)
 
         while self.time_grid.count():
             w = self.time_grid.takeAt(0).widget()
@@ -242,8 +279,9 @@ class ItemPage(QScrollArea):
             cells = [("Total runtime", fmt_hours(item.total_hours, item.category) or "—")]
             if item.video_count and item.kind != "movie":
                 avg = (item.duration_sec or 0) / item.video_count / 60
-                cells.append(("Episodes" if item.category == "anime" else "Files", str(item.video_count)))
-                if item.category == "anime" and avg:
+                episodic = categories.get(item.category).episodic
+                cells.append(("Episodes" if episodic else "Files", str(item.video_count)))
+                if episodic and avg:
                     cells.append(("Per episode", f"{avg:.0f} min"))
         for col, (label, value) in enumerate(cells):
             v = QLabel(value)
@@ -254,13 +292,14 @@ class ItemPage(QScrollArea):
             self.time_grid.addWidget(lab, 1, col)
 
         self.summary.setText(item.summary or "No summary.")
+        self._fill_episodes(item)
 
         self.e_title.setText(item.title)
         self.e_title.setPlaceholderText(item.detected_title)
         self.e_category.setCurrentIndex(max(0, self.e_category.findData(item.category)))
         idx = self.e_platform.findData(item.platform) if item.platform else 0
         self.e_platform.setCurrentIndex(max(0, idx))
-        self.e_platform.setEnabled(item.category == "game")
+        self.e_platform.setEnabled(categories.get(item.category).platforms)
         self.e_year.setValue(item.year or 0)
         self.e_notes.setPlainText(item.notes or "")
 
@@ -277,10 +316,55 @@ class ItemPage(QScrollArea):
             + (f"<br><i>Detected: {item.detected_how}</i>" if item.detected_how else ""))
         self.open_btn.setEnabled(bool(mount) and not item.missing)
 
+    def _fill_episodes(self, item: db.Item) -> None:
+        with db.session() as conn:
+            eps = db.get_episodes(conn, item.id)
+        show = categories.get(item.category).episodic and item.kind != "movie"
+        for w in (self.episodes_title, self.episodes_info, self.episodes):
+            w.setVisible(show)
+        if not show:
+            return
+        self.episodes.setRowCount(len(eps))
+        self._episode_urls = [e.url for e in eps]
+        for row, e in enumerate(eps):
+            score = QTableWidgetItem(scores_fmt(e) if e.score is not None else "–")
+            if e.score is not None:
+                score.setForeground(theme.rating_color(e.score, e.score_max))
+            title = e.title or ""
+            if e.note:
+                title += f"  ({e.note})"
+            cells = [QTableWidgetItem(f"{e.number}"), QTableWidgetItem(title), score,
+                     QTableWidgetItem(e.aired or ""), QTableWidgetItem("✓" if e.on_disk else "")]
+            for col, cell in enumerate(cells):
+                if col != 1:
+                    cell.setTextAlignment(Qt.AlignCenter)
+                self.episodes.setItem(row, col, cell)
+        row_h = self.episodes.verticalHeader().defaultSectionSize()
+        self.episodes.setFixedHeight(self.episodes.horizontalHeader().height()
+                                     + row_h * min(max(len(eps), 1), 14) + 4)
+        if not eps:
+            self.episodes_info.setText("No episode list yet. TVmaze (TV) and MyAnimeList (anime) "
+                                       "provide one without keys; AniDB / TMDB with a key. "
+                                       "Use Refetch to try again.")
+            return
+        scored = [e for e in eps if e.score is not None]
+        bits = [f"{len(eps)} episodes from {eps[0].source}",
+                f"{sum(e.on_disk for e in eps)} on disk"]
+        if scored:
+            avg = sum(e.score / (e.score_max or 10) for e in scored) / len(scored) * 10
+            top = max(scored, key=lambda e: e.score / (e.score_max or 10))
+            bits.insert(1, f"average {avg:.1f}/10")
+            bits.insert(2, f"best: #{top.number} {top.title or ''} ({scores_fmt(top)})")
+        self.episodes_info.setText("  ·  ".join(bits))
+
+    def _open_episode(self, row: int, _col: int) -> None:
+        url = self._episode_urls[row] if row < len(self._episode_urls) else None
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+
     def _set_done(self, done: bool, when: str | None) -> None:
         self.done_btn.setChecked(done)
-        verb = {"game": "Beaten", "anime": "Watched", "movie": "Watched"}.get(
-            self.item.category if self.item else "", "Completed")
+        verb = categories.get(self.item.category if self.item else None).done
         self.done_btn.setText(f"✓  {verb}" if done else f"Mark as {verb.lower()}")
         self.done_when.setText(f"on {when[:10]}" if done and when else "")
 
@@ -288,30 +372,21 @@ class ItemPage(QScrollArea):
 
     def _toggle_done(self, checked: bool) -> None:
         with db.session() as conn:
-            db.set_completed(conn, [self.item.id], checked)
+            library.set_completed(conn, [self.item.id], checked)
             item = db.get_item(conn, self.item.id)
         self.item = item
         self._set_done(item.completed, item.completed_at)
         self.changed.emit(item.id)
 
     def _save(self) -> None:
-        it = self.item
-        title = self.e_title.text().strip()
-        category = self.e_category.currentData()
-        platform = self.e_platform.currentData() if category == "game" else None
-        year = self.e_year.value() or None
-        lookup_changed = (title != it.title or category != it.category
-                          or platform != it.platform or year != it.year)
         with db.session() as conn:
-            conn.execute(
-                "UPDATE items SET user_title=?, user_category=?, user_platform=?, year=?, notes=? "
-                "WHERE id=?",
-                (title if title and title != it.detected_title else None, category, platform,
-                 year, self.e_notes.toPlainText().strip() or None, it.id),
-            )
-        self.changed.emit(it.id)
+            lookup_changed = library.edit_item(
+                conn, self.item, title=self.e_title.text(), category=self.e_category.currentData(),
+                platform=self.e_platform.currentData(), year=self.e_year.value() or None,
+                notes=self.e_notes.toPlainText())
+        self.changed.emit(self.item.id)
         if lookup_changed:
-            self.refetch.emit(it.id)
+            self.refetch.emit(self.item.id)
 
     def _delete(self) -> None:
         if QMessageBox.question(
@@ -321,7 +396,5 @@ class ItemPage(QScrollArea):
         ) != QMessageBox.Yes:
             return
         with db.session() as conn:
-            conn.execute("DELETE FROM items WHERE id=?", (self.item.id,))
-        if self.item.poster:
-            (paths.posters_dir() / self.item.poster).unlink(missing_ok=True)
+            library.remove_items(conn, [self.item.id])
         self.deleted.emit(self.item.id)

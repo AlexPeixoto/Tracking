@@ -3,7 +3,7 @@ header art and Metacritic score. Public store endpoints, no key."""
 
 from __future__ import annotations
 
-from .base import Metadata, RateLimiter, ScoreEntry, best_match, cached_json, session
+from .base import Metadata, Provider, Query, RateLimiter, ScoreEntry, best_match, cached_json, session
 
 SEARCH_URL = "https://store.steampowered.com/api/storesearch/"
 DETAILS_URL = "https://store.steampowered.com/api/appdetails"
@@ -19,7 +19,7 @@ def _get(url: str, params: dict) -> dict:
     return r.json()
 
 
-def lookup(title: str) -> Metadata | None:
+def _search(title: str) -> Metadata | None:
     found = cached_json("steam", f"search-{title.lower()}", 30,
                         lambda: _get(SEARCH_URL, {"term": title, "l": "english", "cc": "US"}))
     best = best_match(title, None, found.get("items") or [], names=lambda g: [g.get("name")])
@@ -55,3 +55,11 @@ def lookup(title: str) -> Metadata | None:
         summary=data.get("short_description") or None,
         scores=scores,
     )
+
+
+def lookup(q: Query) -> Metadata | None:
+    return _search(q.title)
+
+
+PROVIDER = Provider("steam", "Steam reviews", frozenset({"game"}), lookup, cover_rank=50,
+                    applies=lambda q: q.platform in (None, "PC"))

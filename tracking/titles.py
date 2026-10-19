@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
+
+log = logging.getLogger(__name__)
 
 _BRACKETS = re.compile(r"\[[^\]]*\]|\{[^}]*\}")
 _PARENS = re.compile(r"\([^)]*\)")
@@ -167,8 +170,8 @@ def parse_video(name: str) -> VideoInfo:
                 title = f"{title}: {alt}"
             return VideoInfo(title, _as_int(g.get("year")), season, episode,
                              "series" if is_series else "movie")
-    except Exception:
-        pass
+    except Exception as e:  # fall back to the simple parser below, but say so
+        log.debug("guessit failed on %r: %s", name, e)
     s = strip_ext(name)
     m = _YEAR.search(s)
     year = int(m.group(1)) if m else None

@@ -9,11 +9,11 @@ from __future__ import annotations
 import threading
 import time
 
-from .. import titles
+from .. import platforms, titles
 from .base import (
-    Metadata, ProviderError, RateLimiter, ScoreEntry, best_match, cached_json, session,
+    Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, Setting, best_match,
+    cached_json, session,
 )
-from .games import RAWG_PLATFORMS
 
 TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 API_URL = "https://api.igdb.com/v4/games"
@@ -48,7 +48,7 @@ def _access_token(client_id: str, secret: str) -> str:
         return _token[1]
 
 
-def lookup(title: str, platform: str | None, client_id: str, secret: str) -> Metadata | None:
+def _search(title: str, platform: str | None, client_id: str, secret: str) -> Metadata | None:
     if not (client_id and secret):
         return None
 
@@ -67,8 +67,7 @@ def lookup(title: str, platform: str | None, client_id: str, secret: str) -> Met
         return r.json()
 
     games = cached_json("igdb", title.lower(), 30, fetch)
-    want = titles.normalize(IGDB_PLATFORMS.get(platform or "") or RAWG_PLATFORMS.get(platform or "")
-                            or (platform or ""))
+    want = titles.normalize(platforms.service_name(platform, "igdb") or "")
 
     def on_platform(g) -> float:
         names = {titles.normalize(p.get("name", "")) for p in g.get("platforms") or []}
@@ -95,3 +94,19 @@ def lookup(title: str, platform: str | None, client_id: str, secret: str) -> Met
         summary=best.get("summary") or None,
         scores=scores,
     )
+
+
+def lookup(q: Query) -> Metadata | None:
+    return _search(q.title, q.platform, q.setting("igdb_client_id"), q.setting("igdb_client_secret"))
+
+
+PROVIDER = Provider(
+    "igdb", "IGDB", frozenset({"game"}), lookup,
+    settings=(
+        Setting("igdb_client_id", "IGDB Client ID",
+                "IGDB critic + user ratings, covers, summaries; good for retro consoles. "
+                "Free Twitch app: dev.twitch.tv/console/apps.", secret=False),
+        Setting("igdb_client_secret", "IGDB Client Secret", "From the same Twitch app."),
+    ),
+    required=("igdb_client_id", "igdb_client_secret"), cover_rank=10,
+)

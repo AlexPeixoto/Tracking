@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
-from .base import Metadata, ProviderError, RateLimiter, ScoreEntry, best_match, cached_json, session
+from .base import (
+    Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, Setting, best_match, cached_json,
+    session,
+)
 
 API_URL = "https://api.trakt.tv"
 
 _limit = RateLimiter(0.3)
 
 
-def lookup(title: str, year: int | None, client_id: str, kind: str = "movie") -> Metadata | None:
+def _search(title: str, year: int | None, client_id: str, kind: str = "movie") -> Metadata | None:
     """``kind`` is 'movie' or 'show' (anime series)."""
     if not client_id:
         return None
@@ -39,3 +42,17 @@ def lookup(title: str, year: int | None, client_id: str, kind: str = "movie") ->
         scores.append(ScoreEntry("Trakt", round(best["rating"], 1), 10, url))
     return Metadata(title=best.get("title"), year=best.get("year"), external_url=url,
                     summary=best.get("overview") or None, scores=scores)
+
+
+def lookup(q: Query) -> Metadata | None:
+    kind = "movie" if q.category == "movie" or q.kind == "movie" else "show"
+    return _search(q.title, q.year, q.setting("trakt_client_id"), kind)
+
+
+PROVIDER = Provider(
+    "trakt", "Trakt", frozenset({"movie", "tv", "anime"}), lookup,
+    settings=(Setting("trakt_client_id", "Trakt Client ID",
+                      "Trakt score. Free app: trakt.tv/oauth/applications/new, redirect URI "
+                      "urn:ietf:wg:oauth:2.0:oob."),),
+    required=("trakt_client_id",), cover_rank=60,
+)

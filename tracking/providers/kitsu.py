@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from .anilist import format_bonus
-from .base import Metadata, RateLimiter, ScoreEntry, best_match, cached_json, session, year_of
+from .base import (
+    Metadata, Provider, Query, RateLimiter, ScoreEntry, best_match, cached_json, media_format_bonus,
+    session, year_of,
+)
 
 API_URL = "https://kitsu.app/api/edge/anime"
 
 _limit = RateLimiter(0.5)
 
 
-def lookup(title: str, year: int | None, kind: str | None = None) -> Metadata | None:
+def _search(title: str, year: int | None, kind: str | None = None) -> Metadata | None:
     def fetch():
         _limit.wait()
         r = session().get(API_URL, params={"filter[text]": title, "page[limit]": 10},
@@ -25,7 +27,7 @@ def lookup(title: str, year: int | None, kind: str | None = None) -> Metadata | 
                          *(a["attributes"].get("titles") or {}).values(),
                          *(a["attributes"].get("abbreviatedTitles") or [])],
         cand_year=lambda a: year_of(a["attributes"].get("startDate")),
-        bonus=lambda a: format_bonus(a["attributes"].get("subtype"), kind),
+        bonus=lambda a: media_format_bonus(a["attributes"].get("subtype"), kind),
     )
     if not best:
         return None
@@ -41,3 +43,10 @@ def lookup(title: str, year: int | None, kind: str | None = None) -> Metadata | 
         summary=attr.get("synopsis") or None,
         scores=[ScoreEntry("Kitsu", float(rating), 100, url)] if rating else [],
     )
+
+
+def lookup(q: Query) -> Metadata | None:
+    return _search(q.title, q.year, q.kind)
+
+
+PROVIDER = Provider("kitsu", "Kitsu", frozenset({"anime"}), lookup, cover_rank=40)

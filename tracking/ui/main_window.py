@@ -13,14 +13,15 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from .. import db, scanner, volumes
+from .. import categories, db, library, platforms, scan, volumes
 from . import dialogs
 from .grid import CardDelegate, ItemModel, ItemRole
 from .item_page import ItemPage
 from .workers import EnrichJob, Job, ScanJob
 
-SECTIONS = [("anime", "Anime"), ("movie", "Movies"), ("game", "Games"), ("unknown", "Unknown")]
-SORTS = [("title", "Title"), ("rating", "Rating"), ("time", "Total time"), ("recent", "Recently added")]
+SECTIONS = [(c.key, c.label) for c in categories.CATEGORIES]
+SORTS = [("title", "Title"), ("avg", "Score: average"), ("best", "Score: highest"),
+         ("time", "Total time"), ("recent", "Recently added")]
 NavRole = Qt.UserRole + 10
 
 
@@ -207,7 +208,7 @@ class MainWindow(QMainWindow):
         known = volumes.list_volumes()
         with db.session() as conn:
             rows = conn.execute("SELECT uid, label FROM volumes").fetchall()
-            self.mounts = {r["uid"]: scanner.mount_for(conn, r["uid"], known) for r in rows}
+            self.mounts = {r["uid"]: scan.mount_for(conn, r["uid"], known) for r in rows}
             self.labels = {r["uid"]: r["label"] or "(no label)" for r in rows}
         self.model.offline_volumes = {u for u, m in self.mounts.items() if not m}
 
@@ -271,8 +272,12 @@ class MainWindow(QMainWindow):
             and not (hide_missing and i.missing)
         ]
         key = self.sort.currentData()
-        if key == "rating":
-            items.sort(key=lambda i: -(i.rating / (i.rating_max or 10)) if i.rating is not None else 1)
+        if key in ("avg", "best"):
+            # Unscored items last; ties broken by how many sites scored it.
+            def score(i):
+                v = i.avg_score if key == "avg" else i.best_score
+                return (v is None, -(v or 0), -len(i.scores))
+            items.sort(key=score)
         elif key == "time":
             items.sort(key=lambda i: -(i.total_hours or 0))
         elif key == "recent":
@@ -427,7 +432,7 @@ class MainWindow(QMainWindow):
         if not item or not mount:
             QMessageBox.information(self, "Offline", "That drive isn't connected right now.")
             return
-        path = volumes.join(mount, scanner.fs_path(item.rel_path))
+        path = volumes.join(mount, scan.fs_path(item.rel_path))
         if not os.path.exists(path):
             QMessageBox.information(self, "Missing", "It's no longer at its last known location.")
         elif os.name == "nt":
@@ -440,15 +445,12 @@ class MainWindow(QMainWindow):
 
     def set_completed(self, ids: list[int], done: bool):
         with db.session() as conn:
-            db.set_completed(conn, ids, done)
+            library.set_completed(conn, ids, done)
         self.reload()
 
     def set_category(self, ids: list[int], category: str, platform: str | None = None):
         with db.session() as conn:
-            conn.executemany(
-                "UPDATE items SET user_category=?, user_platform=? WHERE id=?",
-                [(category, platform, i) for i in ids],
-            )
+            library.move_items(conn, ids, category, platform)
         self.reload()
         self.start_job(EnrichJob(ids, force=True))
 
@@ -476,7 +478,7 @@ class MainWindow(QMainWindow):
             if key == "game":
                 games = move.addMenu("Games")
                 games.addAction("Unknown platform", lambda: self.set_category(ids, "game", None))
-                for p in dialogs.PLATFORMS:
+                for p in platforms.NAMES:
                     games.addAction(p, lambda p=p: self.set_category(ids, "game", p))
             else:
                 move.addAction(label, lambda k=key: self.set_category(ids, k))
@@ -486,6 +488,15 @@ class MainWindow(QMainWindow):
         n = len(self.grid.selectionModel().selectedIndexes())
         self.bulk.setVisible(n > 1)
         self.bulk_label.setText(f"{n} selected")
+
+    def after_import(self, result):
+        self.refresh_volumes()
+        self.reload()
+        if result.need_metadata and QMessageBox.question(
+                self, "Fetch covers",
+                f"{result.need_metadata} imported items have no cover yet. Fetch covers and "
+                "scores for them now?") == QMessageBox.Yes:
+            self.start_job(EnrichJob(only_pending=True))
 
     def open_log(self):
         dialogs.LogDialog(self).exec()

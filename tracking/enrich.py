@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import sqlite3
 from datetime import datetime, timezone
 from typing import Callable
 
-from . import db, duration, paths, scanner, volumes
+from . import categories, db, duration, paths, scan, volumes
+from .scores import RATING_PREF
+from . import providers
 from .providers import Metadata, ProviderError
-from .providers import anidb, anilist, games, igdb, kitsu, omdb, opencritic, steam, tmdb, trakt
 from .providers.base import search_variants, session
 
 log = logging.getLogger(__name__)
@@ -21,7 +23,7 @@ ART_EXT = (".jpg", ".jpeg", ".png", ".webp")
 
 
 def item_abs_path(mount: str, item: db.Item) -> str:
-    return volumes.join(mount, scanner.fs_path(item.rel_path))
+    return volumes.join(mount, scan.fs_path(item.rel_path))
 
 
 # --------------------------------------------------------------------------- durations
@@ -83,62 +85,14 @@ def _save_poster(item_id: int, src_path: str | None = None, url: str | None = No
 
 # --------------------------------------------------------------------------- metadata
 
-# Which score becomes the headline rating on the card, best first.
-RATING_PREF = {
-    "anime": ["AniDB", "MAL", "AniList", "Kitsu", "Trakt"],
-    "movie": ["IMDb", "TMDB", "Trakt", "Metacritic", "Rotten Tomatoes"],
-    "game": ["Metacritic", "OpenCritic", "IGDB critics", "Steam", "IGDB users", "RAWG users",
-             "HLTB users"],
-}
-# Services that do nothing without a setting (OMDb falls back to IMDb search, so it isn't here).
-NEEDS_KEY = {
-    "rawg": "rawg_key", "igdb": "igdb_client_id", "opencritic": "opencritic_key",
-    "tmdb": "tmdb_key", "trakt": "trakt_client_id", "anidb": "anidb_client",
-}
-# Whose cover art to use, best first (others only fill in when these have none).
-POSTER_PREF = {
-    "anime": ["anidb", "anilist", "mal", "kitsu"],
-    "movie": ["tmdb", "omdb"],
-    "game": ["igdb", "hltb", "rawg", "steam"],
-}
+def combine(category: str, results: dict[str, Metadata],
+            cover_rank: dict[str, int] | None = None) -> Metadata | None:
+    """Merge per-service results (dict order = priority) into one record.
 
-
-def _sources(item: db.Item, s: Callable[[str], str],
-             t: str) -> list[tuple[str, Callable[[], Metadata | None]]]:
-    """(name, lookup) pairs for the item's category, searching for title ``t``.
-    Order = priority for title, summary and links; services without a configured
-    key return None."""
-    y = item.year
-    if item.category == "movie":
-        return [
-            ("omdb", lambda: omdb.lookup(t, y, s("omdb_key"))),
-            ("tmdb", lambda: tmdb.lookup(t, y, s("tmdb_key"))),
-            ("trakt", lambda: trakt.lookup(t, y, s("trakt_client_id"), "movie")),
-        ]
-    if item.category == "anime":
-        return [
-            ("anidb", lambda: anidb.lookup_anidb(t, s("anidb_client"), s("anidb_clientver"))),
-            ("anilist", lambda: anilist.lookup(t, y, item.kind)),
-            ("mal", lambda: anidb.lookup_mal(t, y, item.kind)),
-            ("kitsu", lambda: kitsu.lookup(t, y, item.kind)),
-            ("trakt", lambda: trakt.lookup(t, y, s("trakt_client_id"),
-                                           "movie" if item.kind == "movie" else "show")),
-        ]
-    if item.category == "game":
-        out = [
-            ("rawg", lambda: games.lookup_rawg(t, item.platform, s("rawg_key"))),
-            ("igdb", lambda: igdb.lookup(t, item.platform, s("igdb_client_id"), s("igdb_client_secret"))),
-            ("hltb", lambda: games.lookup_hltb(t, item.platform)),
-            ("opencritic", lambda: opencritic.lookup(t, s("opencritic_key"))),
-        ]
-        if item.platform in (None, "PC"):
-            out.append(("steam", lambda: steam.lookup(t)))
-        return out
-    return []
-
-
-def combine(category: str, results: dict[str, Metadata]) -> Metadata | None:
-    """Merge per-service results (dict order = priority) into one record."""
+    Scores are pooled (first one of each name wins, e.g. Metacritic via RAWG and
+    Steam), the cover comes from the service with the best ``cover_rank``, and
+    the headline rating is the first score in scores.RATING_PREF order.
+    """
     if not results:
         return None
     md = Metadata()
@@ -149,12 +103,13 @@ def combine(category: str, results: dict[str, Metadata]) -> Metadata | None:
             if getattr(md, field) is None and getattr(r, field) is not None:
                 setattr(md, field, getattr(r, field))
         for sc in r.scores:
-            if sc.source not in seen:  # e.g. Metacritic from both RAWG and Steam
+            if sc.source not in seen:
                 seen.add(sc.source)
                 md.scores.append(sc)
-    order = POSTER_PREF.get(category, []) + list(results)
-    md.poster_url = next((results[k].poster_url for k in order
-                          if k in results and results[k].poster_url), None)
+    ranks = cover_rank or {p.name: p.cover_rank for p in providers.REGISTRY}
+    with_cover = [name for name, r in results.items() if r.poster_url]
+    if with_cover:
+        md.poster_url = results[min(with_cover, key=lambda n: ranks.get(n, 50))].poster_url
     by_source = {sc.source: sc for sc in md.scores}
     head = next((by_source[n] for n in RATING_PREF.get(category, []) if n in by_source),
                 md.scores[0] if md.scores else None)
@@ -163,39 +118,85 @@ def combine(category: str, results: dict[str, Metadata]) -> Metadata | None:
     return md
 
 
-def lookup(conn: sqlite3.Connection, item: db.Item) -> tuple[Metadata | None, list[str]]:
-    warnings: list[str] = []
-    s = lambda k: db.get_setting(conn, k).strip()  # noqa: E731
-    results: dict[str, Metadata] = {}
+def search_titles(item: db.Item) -> list[str]:
+    """Titles to try, best first. TV ratings are per show, so "Bad Sisters
+    Season 2" is looked up as "Bad Sisters" first."""
     variants = search_variants(item.title)
-    for name, _ in _sources(item, s, item.title):
-        if name in NEEDS_KEY and not s(NEEDS_KEY[name]):
-            log.debug("%s: skipped (no key in Settings)", name)
+    if item.category == "tv":
+        show = re.sub(r"(?i)\s+season\s+\d+$", "", item.title)
+        variants = search_variants(show) + [v for v in variants if v not in search_variants(show)]
+    return variants
+
+
+def make_query(conn: sqlite3.Connection, item: db.Item) -> providers.Query:
+    settings = {r["key"]: r["value"] or "" for r in conn.execute("SELECT key, value FROM settings")}
+    return providers.Query(item.title, item.year, item.category, item.kind, item.platform,
+                           item.season, settings)
+
+
+def lookup(conn: sqlite3.Connection, item: db.Item
+           ) -> tuple[Metadata | None, list[str], dict[str, Metadata]]:
+    """Ask every service registered for the item's category. Returns the merged
+    result, warnings for the user, and each service's own result."""
+    warnings: list[str] = []
+    query = make_query(conn, item)
+    results: dict[str, Metadata] = {}
+    for p in providers.for_query(query):
+        if not p.configured(query):
+            log.debug("%s: skipped (no key in Settings)", p.name)
             continue
         try:
             r = None
-            for t in variants:  # retry "Show 1st GIG" as "Show"
-                r = dict(_sources(item, s, t))[name]()
+            for title in search_titles(item):  # retry "Show 1st GIG" as "Show", etc.
+                r = p.lookup(query.with_title(title))
                 if r:
                     break
         except ProviderError as e:
-            log.warning("%s: %s", name, e)
+            log.warning("%s: %s", p.name, e)
             warnings.append(str(e))
             continue
         except Exception as e:  # one service being down shouldn't block the others
-            log.warning("%s lookup for %r failed: %s", name, item.title, e)
-            warnings.append(f"{name} lookup for {item.title}: {e}")
+            log.warning("%s lookup for %r failed: %s", p.name, item.title, e)
+            warnings.append(f"{p.label} lookup for {item.title}: {e}")
             continue
         if r:
-            log.debug("%s: %r -> %r (%s) %s", name, item.title, r.title, r.year,
+            log.debug("%s: %r -> %r (%s) %s", p.name, item.title, r.title, r.year,
                       ", ".join(f"{sc.source} {sc.value:g}" for sc in r.scores) or "no score")
-            results[name] = r
+            results[p.name] = r
         else:
-            log.debug("%s: no match for %r", name, item.title)
+            log.debug("%s: no match for %r", p.name, item.title)
     md = combine(item.category, results)
     log.info("metadata for %r: %s", item.title,
              f"{md.rating_source} {md.rating:g}" if md and md.rating is not None else "no rating")
-    return md, warnings
+    return md, warnings, results
+
+
+def fetch_episodes(query: providers.Query, results: dict[str, Metadata]
+                   ) -> tuple[str, list[providers.Episode]] | None:
+    """Episode list from the first service (registry order) that found the show
+    and can list its episodes: AniDB, TMDB, TVmaze, MAL. None if nobody can."""
+    for p in providers.for_query(query):
+        found = results.get(p.name)
+        if not (p.episodes and found and found.external_id):
+            continue
+        try:
+            eps = p.episodes(query, found.external_id)
+        except Exception as e:
+            log.warning("%s episodes for %r failed: %s", p.name, query.title, e)
+            continue
+        if eps:
+            return p.label.split(" (")[0], eps
+    return None
+
+
+def save_episodes(conn: sqlite3.Connection, item_id: int, source: str,
+                  episodes: list[providers.Episode]) -> None:
+    conn.execute("DELETE FROM episodes WHERE item_id=?", (item_id,))
+    conn.executemany(
+        "INSERT OR REPLACE INTO episodes(item_id, season, number, title, aired, runtime_min, score, "
+        "score_max, source, url, note) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        [(item_id, e.season, e.number, e.title, e.aired, e.runtime_min, e.score, e.score_max,
+          source, e.url, e.note) for e in episodes])
 
 
 def enrich_item(conn: sqlite3.Connection, item_id: int, mount: str | None,
@@ -204,7 +205,12 @@ def enrich_item(conn: sqlite3.Connection, item_id: int, mount: str | None,
     item = db.get_item(conn, item_id)
     if not item:
         return []
-    md, warnings = lookup(conn, item)
+    md, warnings, results = lookup(conn, item)
+    if categories.get(item.category).episodic and item.kind != "movie" and results:
+        found = fetch_episodes(make_query(conn, item), results)
+        if found:
+            save_episodes(conn, item.id, *found)
+            log.info("episodes for %r: %d from %s", item.title, len(found[1]), found[0])
 
     poster = None if force else item.poster
     if mount and not poster:

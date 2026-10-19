@@ -51,7 +51,7 @@ def test_closing_window_stops_background_job(tmp_path, monkeypatch):
     from tracking.ui import main_window
     from tracking.ui.workers import Job
 
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     monkeypatch.setattr(main_window.QTimer, "singleShot", lambda *a: None)
     win = main_window.MainWindow()
     done: list[str] = []

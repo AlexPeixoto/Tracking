@@ -8,7 +8,8 @@ def selftest() -> int:
     import os
     import tempfile
 
-    from . import classify, log, titles
+    from . import log, titles
+    from .scan import classify
 
     log.setup("INFO")
     results = []

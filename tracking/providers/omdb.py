@@ -1,4 +1,4 @@
-"""Movies: IMDb rating + poster through OMDb (free key: https://www.omdbapi.com/apikey.aspx).
+"""Movies and TV shows: IMDb rating + poster through OMDb (free key: https://www.omdbapi.com/apikey.aspx).
 
 Without a key we fall back to IMDb's public search suggestions, which give a
 poster and IMDb link but no rating.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from .base import Metadata, ProviderError, ScoreEntry, cached_json, session, similarity
+from .base import Metadata, Provider, ProviderError, Query, ScoreEntry, Setting, cached_json, session, similarity
 
 OMDB_URL = "https://www.omdbapi.com/"
 SUGGEST_URL = "https://v3.sg.media-imdb.com/suggestion/x/{q}.json"
@@ -31,12 +31,6 @@ def _omdb(params: dict) -> dict:
 
 
 def _from_omdb(d: dict) -> Metadata:
-    def num(v: str | None) -> float | None:
-        try:
-            return float(str(v).replace(",", ""))
-        except (TypeError, ValueError):
-            return None
-
     year = re.match(r"\d{4}", d.get("Year") or "")
     poster = d.get("Poster")
     url = f"https://www.imdb.com/title/{d['imdbID']}/" if d.get("imdbID") else None
@@ -54,24 +48,25 @@ def _from_omdb(d: dict) -> Metadata:
         scores=scores,
         title=d.get("Title"),
         year=int(year.group()) if year else None,
-        rating=num(d.get("imdbRating")),
-        rating_max=10,
-        rating_source="IMDb",
         external_id=d.get("imdbID"),
-        external_url=f"https://www.imdb.com/title/{d['imdbID']}/" if d.get("imdbID") else None,
+        external_url=url,
         poster_url=poster if poster and poster != "N/A" else None,
         summary=d.get("Plot") if d.get("Plot") not in (None, "N/A") else None,
     )
 
 
-def lookup(title: str, year: int | None, api_key: str) -> Metadata | None:
+_SUGGEST_KINDS = {"movie": ("movie", "tvMovie", "video"), "series": ("tvSeries", "tvMiniSeries")}
+
+
+def _search(title: str, year: int | None, api_key: str, kind: str = "movie") -> Metadata | None:
+    """``kind`` is "movie" or "series" (TV shows)."""
     if api_key:
-        return _lookup_omdb(title, year, api_key)
-    return _lookup_suggest(title, year)
+        return _lookup_omdb(title, year, api_key, kind)
+    return _lookup_suggest(title, year, kind)
 
 
-def _lookup_omdb(title: str, year: int | None, api_key: str) -> Metadata | None:
-    base = {"apikey": api_key, "type": "movie", "plot": "short"}
+def _lookup_omdb(title: str, year: int | None, api_key: str, kind: str = "movie") -> Metadata | None:
+    base = {"apikey": api_key, "type": kind, "plot": "short"}
     if year:
         d = _omdb({**base, "t": title, "y": year})
         if d.get("Response") == "True":
@@ -80,7 +75,7 @@ def _lookup_omdb(title: str, year: int | None, api_key: str) -> Metadata | None:
     if d.get("Response") == "True" and similarity(title, d.get("Title", "")) >= 80:
         return _from_omdb(d)
     # Fuzzy: search and take the best title / year match.
-    s = _omdb({"apikey": api_key, "s": title, "type": "movie"})
+    s = _omdb({"apikey": api_key, "s": title, "type": kind})
     best, best_score = None, 0.0
     for r in s.get("Search") or []:
         score = similarity(title, r.get("Title", ""))
@@ -95,7 +90,7 @@ def _lookup_omdb(title: str, year: int | None, api_key: str) -> Metadata | None:
     return None
 
 
-def _lookup_suggest(title: str, year: int | None) -> Metadata | None:
+def _lookup_suggest(title: str, year: int | None, kind: str = "movie") -> Metadata | None:
     q = re.sub(r"[^\w ]+", "", title.lower()).strip().replace(" ", "_")
     if not q:
         return None
@@ -108,7 +103,7 @@ def _lookup_suggest(title: str, year: int | None) -> Metadata | None:
     data = cached_json("imdb-suggest", q, 30, fetch)
     best, best_score = None, 0.0
     for r in data.get("d") or []:
-        if r.get("qid") not in ("movie", "tvMovie", "video"):
+        if r.get("qid") not in _SUGGEST_KINDS.get(kind, _SUGGEST_KINDS["movie"]):
             continue
         score = similarity(title, r.get("l", ""))
         if year and r.get("y") == year:
@@ -124,3 +119,17 @@ def _lookup_suggest(title: str, year: int | None) -> Metadata | None:
         external_url=f"https://www.imdb.com/title/{best['id']}/",
         poster_url=(best.get("i") or {}).get("imageUrl"),
     )
+
+
+def lookup(q: Query) -> Metadata | None:
+    return _search(q.title, q.year, q.setting("omdb_key"), "series" if q.category == "tv" else "movie")
+
+
+# Not "required": without a key it still finds posters and IMDb links.
+PROVIDER = Provider(
+    "omdb", "IMDb / OMDb", frozenset({"movie", "tv"}), lookup,
+    settings=(Setting("omdb_key", "OMDb API key",
+                      "IMDb rating, plus Rotten Tomatoes and Metacritic for movies. Free: "
+                      "omdbapi.com/apikey.aspx. Without it you still get IMDb posters and links."),),
+    cover_rank=40,
+)

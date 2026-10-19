@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
-from . import paths
+from . import categories, paths, scores as score_math
 
-CATEGORIES = ("anime", "movie", "game", "unknown")
+CATEGORIES = categories.KEYS
 UNKNOWN_PLATFORM = "Unknown"
 
 SCHEMA = """
@@ -85,7 +86,25 @@ CREATE TABLE IF NOT EXISTS media_files (
     size_bytes   INTEGER NOT NULL,
     mtime        REAL NOT NULL,
     duration_sec REAL,
+    season       INTEGER,          -- parsed from the file name (episodic items)
+    episode      INTEGER,
     PRIMARY KEY (item_id, rel_path)
+);
+
+-- Episode list of a series season, with per-episode scores, from one service.
+CREATE TABLE IF NOT EXISTS episodes (
+    item_id     INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    season      INTEGER NOT NULL,
+    number      INTEGER NOT NULL,
+    title       TEXT,
+    aired       TEXT,
+    runtime_min REAL,
+    score       REAL,
+    score_max   REAL,
+    source      TEXT NOT NULL,      -- 'TVmaze', 'MAL', 'AniDB', 'TMDB'
+    url         TEXT,
+    note        TEXT,               -- 'filler', 'recap', ...
+    PRIMARY KEY (item_id, season, number)
 );
 
 -- Every score we know for an item (IMDb, Rotten Tomatoes, Metacritic, AniDB, MAL...).
@@ -110,6 +129,8 @@ MIGRATIONS = [
     ("items", "kind", "TEXT"),
     ("items", "season", "INTEGER"),
     ("items", "detected_how", "TEXT"),
+    ("media_files", "season", "INTEGER"),
+    ("media_files", "episode", "INTEGER"),
 ]
 
 
@@ -189,6 +210,16 @@ class Item:
     missing: bool
     detected_title: str
     video_count: int
+    scores: list["Score"] = field(default_factory=list)  # every site's score, best-known first
+
+    @property
+    def avg_score(self) -> float | None:
+        """Average of all scores on a 0-100 scale."""
+        return score_math.average(self.scores)
+
+    @property
+    def best_score(self) -> float | None:
+        return score_math.best(self.scores)
 
     @property
     def total_hours(self) -> float | None:
@@ -259,12 +290,32 @@ def list_items(conn: sqlite3.Connection, category: str | None = None,
         sql += " AND platform=?"
         args.append(platform)
     sql += " ORDER BY title COLLATE NOCASE"
-    return [row_to_item(r) for r in conn.execute(sql, args)]
+    items = [row_to_item(r) for r in conn.execute(sql, args)]
+    _attach_scores(conn, items)
+    return items
 
 
 def get_item(conn: sqlite3.Connection, item_id: int) -> Item | None:
     row = conn.execute(f"{ITEM_SELECT} WHERE id=?", (item_id,)).fetchone()
-    return row_to_item(row) if row else None
+    if not row:
+        return None
+    item = row_to_item(row)
+    _attach_scores(conn, [item])
+    return item
+
+
+def _attach_scores(conn: sqlite3.Connection, items: list[Item]) -> None:
+    if not items:
+        return
+    by_item: dict[int, list[Score]] = defaultdict(list)
+    if len(items) == 1:
+        rows = conn.execute("SELECT * FROM scores WHERE item_id=?", (items[0].id,))
+    else:
+        rows = conn.execute("SELECT * FROM scores")  # one query for the whole grid
+    for r in rows:
+        by_item[r["item_id"]].append(Score(r["source"], r["value"], r["max_value"], r["url"]))
+    for it in items:
+        it.scores = score_math.ordered(by_item.get(it.id, []), it.category)
 
 
 @dataclass
@@ -276,8 +327,34 @@ class Score:
 
 
 def get_scores(conn: sqlite3.Connection, item_id: int) -> list[Score]:
-    return [Score(r["source"], r["value"], r["max_value"], r["url"]) for r in conn.execute(
-        "SELECT * FROM scores WHERE item_id=? ORDER BY source", (item_id,))]
+    item = get_item(conn, item_id)
+    return item.scores if item else []
+
+
+@dataclass
+class EpisodeRow:
+    season: int
+    number: int
+    title: str | None
+    aired: str | None
+    runtime_min: float | None
+    score: float | None
+    score_max: float | None
+    source: str
+    url: str | None
+    note: str | None
+    on_disk: bool
+
+
+def get_episodes(conn: sqlite3.Connection, item_id: int) -> list[EpisodeRow]:
+    """The item's episode list, marking the ones whose file is in the library."""
+    have = {(r["season"] or 1, r["episode"]) for r in conn.execute(
+        "SELECT season, episode FROM media_files WHERE item_id=? AND episode IS NOT NULL", (item_id,))}
+    return [EpisodeRow(r["season"], r["number"], r["title"], r["aired"], r["runtime_min"],
+                       r["score"], r["score_max"], r["source"], r["url"], r["note"],
+                       (r["season"], r["number"]) in have)
+            for r in conn.execute("SELECT * FROM episodes WHERE item_id=? ORDER BY season, number",
+                                  (item_id,))]
 
 
 def set_completed(conn: sqlite3.Connection, item_ids: list[int], done: bool) -> None:

@@ -11,7 +11,7 @@ import threading
 
 from PySide6.QtCore import QObject, QRunnable, Signal
 
-from .. import db, enrich, scanner, volumes
+from .. import db, enrich, scan, volumes
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class Job(QRunnable):
 def _mounts(conn) -> dict[str, str | None]:
     known = volumes.list_volumes()
     uids = [r["uid"] for r in conn.execute("SELECT uid FROM volumes")]
-    return {uid: scanner.mount_for(conn, uid, known) for uid in uids}
+    return {uid: scan.mount_for(conn, uid, known) for uid in uids}
 
 
 class ScanJob(Job):
@@ -74,13 +74,13 @@ class ScanJob(Job):
             if self.cancelled():
                 break
             try:
-                res = scanner.scan_root(
+                res = scan.scan_root(
                     conn, rid,
                     progress=lambda rel: self.signals.progress.emit(f"Scanning {rel}"),
                     cancelled=self.cancelled,
                     missing_completed=self.missing_completed,
                 )
-            except scanner.VolumeOffline:
+            except scan.VolumeOffline:
                 row = conn.execute(
                     "SELECT v.label, r.rel_path FROM roots r JOIN volumes v ON v.uid=r.volume_uid "
                     "WHERE r.id=?", (rid,)).fetchone()

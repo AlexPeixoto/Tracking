@@ -18,8 +18,8 @@ dev = ["pytest"]
 [project.gui-scripts]
 tracking = "tracking.__main__:main"
 
-[tool.setuptools]
-packages = ["tracking", "tracking.providers", "tracking.ui"]
+[tool.setuptools.packages.find]
+include = ["tracking*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

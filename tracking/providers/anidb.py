@@ -5,7 +5,6 @@ AniDB's HTTP API needs a registered client (https://anidb.net/software/add,
 2 seconds, cache everything, and don't download the title dump more than once
 a day — all of which this module does. Getting banned is temporary but annoying.
 
-MyAnimeList (through Jikan, no key) is looked up alongside it as a second score.
 """
 
 from __future__ import annotations
@@ -18,18 +17,16 @@ import xml.etree.ElementTree as ET
 from rapidfuzz import fuzz, process
 
 from .. import titles
-from .anilist import format_bonus
 from .base import (
-    Metadata, ProviderError, RateLimiter, ScoreEntry, cache_file, cached_json, session, similarity,
+    Episode, Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, Setting, cache_file,
+    session,
 )
 
 TITLES_URL = "https://anidb.net/api/anime-titles.xml.gz"
 API_URL = "http://api.anidb.net:9001/httpapi"
 IMAGE_URL = "https://cdn-eu.anidb.net/images/main/{}"
-JIKAN_URL = "https://api.jikan.moe/v4/anime"
 
 _anidb_limit = RateLimiter(2.5)
-_jikan_limit = RateLimiter(1.0)
 
 _index_lock = threading.Lock()
 _index: tuple[list[str], list[int]] | None = None  # parallel lists: normalized title, aid
@@ -97,11 +94,11 @@ def _anime_xml(aid: int, client: str, clientver: str) -> ET.Element:
     return root
 
 
-def _lookup_anidb(title: str, client: str, clientver: str) -> Metadata | None:
-    aid = find_aid(title)
+def lookup(q: Query) -> Metadata | None:
+    aid = find_aid(q.title)
     if not aid:
         return None
-    root = _anime_xml(aid, client, clientver)
+    root = _anime_xml(aid, q.setting("anidb_client"), q.setting("anidb_clientver") or "1")
     main = next((t.text for t in root.iter("title") if t.get("type") == "main"), None)
     rating = root.findtext("ratings/permanent") or root.findtext("ratings/temporary")
     start = root.findtext("startdate") or ""
@@ -113,60 +110,40 @@ def _lookup_anidb(title: str, client: str, clientver: str) -> Metadata | None:
         scores=scores,
         title=main,
         year=int(start[:4]) if start[:4].isdigit() else None,
-        rating=float(rating) if rating else None,
-        rating_max=10,
-        rating_source="AniDB",
         external_id=str(aid),
-        external_url=f"https://anidb.net/anime/{aid}",
+        external_url=url,
         poster_url=IMAGE_URL.format(pic) if pic else None,
         summary=desc,
     )
 
 
-def _lookup_jikan(title: str, year: int | None, kind: str | None = None) -> Metadata | None:
-    def fetch():
-        _jikan_limit.wait()
-        r = session().get(JIKAN_URL, params={"q": title, "limit": 10, "sfw": "false"}, timeout=20)
-        if r.status_code == 429:
-            time.sleep(2)
-            r = session().get(JIKAN_URL, params={"q": title, "limit": 10}, timeout=20)
-        r.raise_for_status()
-        return r.json()
-
-    data = cached_json("jikan", title.lower(), 14, fetch)
-    best, best_score = None, 0.0
-    for a in data.get("data") or []:
-        names = [a.get("title") or "", a.get("title_english") or ""] + [
-            t.get("title", "") for t in a.get("titles") or []]
-        score = max(similarity(title, n) for n in names if n) if any(names) else 0
-        score += format_bonus(a.get("type"), kind)
-        if year and a.get("year") == year:
-            score += 5
-        if score > best_score:
-            best, best_score = a, score
-    if not best or best_score < 75:
-        return None
-    img = ((best.get("images") or {}).get("jpg") or {})
-    scores = [ScoreEntry("MAL", best["score"], 10, best.get("url"))] if best.get("score") else []
-    return Metadata(
-        scores=scores,
-        title=best.get("title_english") or best.get("title"),
-        year=best.get("year"),
-        rating=best.get("score"),
-        rating_max=10,
-        rating_source="MAL",
-        external_id=str(best.get("mal_id")),
-        external_url=best.get("url"),
-        poster_url=img.get("large_image_url") or img.get("image_url"),
-        summary=best.get("synopsis"),
-    )
+def episodes(q: Query, aid: str) -> list[Episode]:
+    """Regular episodes from the anime record we already fetched (cached), with
+    AniDB's per-episode rating."""
+    root = _anime_xml(int(aid), q.setting("anidb_client"), q.setting("anidb_clientver") or "1")
+    season, out = q.season or 1, []
+    for ep in root.iter("episode"):
+        epno = ep.find("epno")
+        if epno is None or epno.get("type") != "1" or not (epno.text or "").isdigit():
+            continue  # specials, credits, trailers
+        titles_ = {t.get("{http://www.w3.org/XML/1998/namespace}lang"): t.text for t in ep.iter("title")}
+        rating = ep.findtext("rating")
+        length = ep.findtext("length")
+        out.append(Episode(season, int(epno.text), titles_.get("en") or titles_.get("x-jat"),
+                           ep.findtext("airdate"), float(length) if length else None,
+                           float(rating) if rating else None, 10,
+                           f"https://anidb.net/episode/{ep.get('id')}"))
+    return sorted(out, key=lambda e: e.number)
 
 
-def lookup_anidb(title: str, client: str, clientver: str) -> Metadata | None:
-    """AniDB, only when an HTTP client is configured."""
-    return _lookup_anidb(title, client, clientver or "1") if client else None
-
-
-def lookup_mal(title: str, year: int | None, kind: str | None = None) -> Metadata | None:
-    """MyAnimeList through Jikan, no key needed."""
-    return _lookup_jikan(title, year, kind)
+PROVIDER = Provider(
+    "anidb", "AniDB", frozenset({"anime"}), lookup, episodes=episodes,
+    settings=(
+        Setting("anidb_client", "AniDB client name",
+                "AniDB score (the headline anime rating when set). Register an HTTP API client "
+                "at anidb.net/software/add.", secret=False),
+        Setting("anidb_clientver", "AniDB client version",
+                "The version you registered, usually 1.", secret=False),
+    ),
+    required=("anidb_client",), cover_rank=10,
+)

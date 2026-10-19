@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 
 from .base import (
-    Metadata, ProviderError, RateLimiter, ScoreEntry, best_match, cached_json, session,
+    Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, best_match, cached_json,
+    media_format_bonus, session,
 )
 
 API_URL = "https://graphql.anilist.co"
@@ -25,19 +26,7 @@ query ($search: String) {
 
 _limit = RateLimiter(2.1)  # AniList allows ~30 requests/minute
 
-_SERIES_FORMATS = {"TV", "TV_SHORT", "ONA", "OVA", "SPECIAL"}
-
-
-def format_bonus(fmt: str | None, kind: str | None) -> float:
-    fmt = (fmt or "").upper().replace(" ", "_")
-    if kind == "movie":
-        return 8 if fmt == "MOVIE" else -5
-    if kind == "series":
-        return 3 if fmt in _SERIES_FORMATS else -8 if fmt == "MOVIE" else 0
-    return 3 if fmt == "TV" else 0
-
-
-def lookup(title: str, year: int | None, kind: str | None = None) -> Metadata | None:
+def _search(title: str, year: int | None, kind: str | None = None) -> Metadata | None:
     """``kind`` ("series" / "movie") steers the match towards TV or movie entries."""
     def fetch():
         _limit.wait()
@@ -54,7 +43,7 @@ def lookup(title: str, year: int | None, kind: str | None = None) -> Metadata | 
         title, year, media,
         names=lambda m: [*(m.get("title") or {}).values(), *(m.get("synonyms") or [])],
         cand_year=lambda m: m.get("seasonYear"),
-        bonus=lambda m: format_bonus(m.get("format"), kind),
+        bonus=lambda m: media_format_bonus(m.get("format"), kind),
     )
     if not best:
         return None
@@ -71,3 +60,10 @@ def lookup(title: str, year: int | None, kind: str | None = None) -> Metadata | 
         summary=desc,
         scores=scores,
     )
+
+
+def lookup(q: Query) -> Metadata | None:
+    return _search(q.title, q.year, q.kind)
+
+
+PROVIDER = Provider("anilist", "AniList", frozenset({"anime"}), lookup, cover_rank=20)
