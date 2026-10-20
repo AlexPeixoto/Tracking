@@ -6,8 +6,18 @@ import os
 import shutil
 import subprocess
 
-from PySide6.QtCore import QSize, Qt, QThreadPool, QTimer, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtCore import QPointF, QSize, Qt, QThreadPool, QTimer, QUrl
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QDesktopServices,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+    QPolygonF,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -84,14 +94,33 @@ def played_order(item: db.Item) -> tuple:
     return (item.playtime_min is None, -(item.playtime_min or 0), item.title.lower())
 
 
-TextRole = Qt.UserRole + 11  # a sidebar section's text without its ▸ / ▾
+_ARROWS: dict[str, QIcon] = {}
+
+
+def _arrow(kind: str) -> QIcon:
+    """▸ / ▾ (or a blank of the same size) drawn as a small icon left of a section's name:
+    the theme hides Qt's own branch arrows, and an icon keeps every name aligned."""
+    if kind not in _ARROWS:
+        pm = QPixmap(12, 12)
+        pm.fill(Qt.transparent)
+        if kind != "blank":
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#8a8f9c"))
+            pts = ([QPointF(3, 2), QPointF(9, 6), QPointF(3, 10)] if kind == "closed"
+                   else [QPointF(2, 4), QPointF(10, 4), QPointF(6, 10)])
+            p.drawPolygon(QPolygonF(pts))
+            p.end()
+        _ARROWS[kind] = QIcon(pm)
+    return _ARROWS[kind]
 
 
 def _chevron(node: QTreeWidgetItem) -> None:
-    """▸ folded / ▾ open after a section's count (the theme hides Qt's own arrows)."""
-    base = node.data(0, TextRole) or node.text(0)
-    if node.childCount():
-        node.setText(0, f"{base}   {'▾' if node.isExpanded() else '▸'}")
+    """The arrow for a top-level entry: open / folded, or blank when it doesn't fold."""
+    if node.parent() is not None:
+        return
+    node.setIcon(0, _arrow(("open" if node.isExpanded() else "closed") if node.childCount() else "blank"))
 
 
 def _child_node(parent: QTreeWidgetItem, text: str, nav: tuple) -> QTreeWidgetItem:
@@ -189,6 +218,7 @@ class MainWindow(QMainWindow):
         self.sidebar.setObjectName("Sidebar")
         self.sidebar.setHeaderHidden(True)
         self.sidebar.setIndentation(14)
+        self.sidebar.setIconSize(QSize(12, 12))
         self.sidebar.setMinimumWidth(200)
         self.sidebar.setMaximumWidth(280)
         self.sidebar.currentItemChanged.connect(self._nav_changed)
@@ -690,9 +720,9 @@ class MainWindow(QMainWindow):
         # Subsections fold away (the arrow, or double-click); what's open is remembered,
         # and a selected entry inside a folded section opens it.
         for node, key in parents:
-            node.setData(0, TextRole, node.text(0))
             node.setExpanded(key in open_ or current.parent() is node)
-            _chevron(node)
+        for n in range(self.sidebar.topLevelItemCount()):
+            _chevron(self.sidebar.topLevelItem(n))
         if self.nav[0] != FOCUS:  # a Library health list isn't a sidebar entry
             self.sidebar.setCurrentItem(current)
         else:
