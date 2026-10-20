@@ -116,8 +116,10 @@ Hades,20/03/2023
 Elden Ring,
 ```
 
-- Dates are `DD/MM/YYYY` (`2023-01-12` works too). No date? The year in the file name is used.
-- Commas or semicolons; the header is optional; a third column can hold the platform.
+- Dates are `DD/MM/YYYY` (`2023-01-12` works too). In a file named for its year (`2023.csv`)
+  `DD/MM` is enough, and a line with no date is filed under that year.
+- Commas or semicolons; the header is optional; a third column can hold the platform; empty
+  extra columns (`Hades,20/03,,,`) are ignored.
 - Names that match your library use its cover; the rest are looked up. Re-importing skips
   what's already there.
 

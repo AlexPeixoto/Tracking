@@ -135,3 +135,25 @@ def test_completed_page_shows_a_year(tmp_path, monkeypatch, conn):
     page.show_year(None)
     assert page.list.count() == 2
     assert Path(tmp_path).exists()
+
+
+def test_day_month_only_takes_the_year_from_the_file_name(tmp_path, conn):
+    f = tmp_path / "2022.csv"
+    f.write_text("name,date,,,\n"
+                 "Hades,20/03,,,\n"           # DD/MM: the year comes from "2022.csv"
+                 "Celeste,1/2,,\n"
+                 "Okami,,,\n"                 # no date at all: just the year
+                 "Outer Wilds,31/02,,\n"      # not a real day
+                 ",,,\n", encoding="utf-8")   # empty line of separators
+    res = completions.import_csv(conn, str(f))
+    assert (res.added, len(res.errors)) == (3, 1), res.errors
+    got = {c.title: (c.completed_on, c.platform) for c in completions.list_year(conn, 2022)}
+    assert got == {"Hades": ("2022-03-20", None), "Celeste": ("2022-02-01", None),
+                   "Okami": ("2022", None)}
+
+
+def test_day_month_needs_a_year():
+    with pytest.raises(ValueError):
+        completions.parse_date("20/03")
+    assert completions.parse_date("20/03", 2021) == "2021-03-20"
+    assert completions.parse_date("20-03", 2021) == "2021-03-20"

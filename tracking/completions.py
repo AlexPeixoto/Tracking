@@ -103,7 +103,8 @@ def today() -> str:
 
 def parse_date(text: str, year_hint: int | None = None) -> str:
     """"31/12/2023" (the CSV format), "2023-12-31", "31-12-2023", "2023" -> stored form.
-    An empty date takes ``year_hint`` (the year in the file name). ValueError otherwise."""
+    With ``year_hint`` (the year in the file name, "2023.csv") a date may leave the year
+    out ("31/12") and an empty date means just that year. ValueError otherwise."""
     t = (text or "").strip()
     if not t:
         if year_hint:
@@ -116,7 +117,15 @@ def parse_date(text: str, year_hint: int | None = None) -> str:
             return datetime.strptime(t, fmt).date().isoformat()
         except ValueError:
             continue
-    raise ValueError(f"unknown date {t!r} (expected DD/MM/YYYY)")
+    if year_hint:
+        m = re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})", t)
+        if m:
+            try:
+                return date(year_hint, int(m.group(2)), int(m.group(1))).isoformat()
+            except ValueError:
+                pass
+    raise ValueError(f"unknown date {t!r} (expected DD/MM/YYYY"
+                     + (" or DD/MM)" if year_hint else ")"))
 
 
 # --------------------------------------------------------------------------- changes
@@ -258,9 +267,9 @@ def read_csv(path: str) -> list[list[str]]:
     return [row for row in csv.reader(text.splitlines(), dialect) if any(c.strip() for c in row)]
 
 
-def _looks_like_date(text: str) -> bool:
+def _looks_like_date(text: str, year: int | None = None) -> bool:
     try:
-        parse_date(text)
+        parse_date(text, year)
         return bool(text.strip())
     except ValueError:
         return False
@@ -275,11 +284,15 @@ def import_csv(conn: sqlite3.Connection, path: str, category: str = "game",
     res = ImportResult()
     for n, row in enumerate(read_csv(path), 1):
         row = [c.strip() for c in row]
+        while row and not row[-1]:  # "Hades,20/03/2023,,," : trailing empty columns
+            row.pop()
+        if not row:
+            continue
         if n == 1 and row[0].lower() in ("name", "title", "game", "nome"):
             continue
         # The date is the first column that reads as one; anything before it is the name
         # ("Incredible Hulk, The,05/02/2023" in an unquoted CSV), after it the platform.
-        at = next((i for i, c in enumerate(row[1:], 1) if _looks_like_date(c)), None)
+        at = next((i for i, c in enumerate(row[1:], 1) if _looks_like_date(c, year)), None)
         if at is None:
             name, when, extra = row[0], (row[1] if len(row) > 1 else ""), row[2:]
             if len(row) > 1 and when and not re.search(r"\d", when):  # "Hulk, The" without a date
