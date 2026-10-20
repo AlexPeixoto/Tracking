@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import categories, completions, db, platforms
-from .grid import load_scaled
+from .grid import cover_pixmap
 from .year_image import ExportYearDialog
 
 COVER = QSize(120, 168)
@@ -58,25 +58,21 @@ def _placeholder(title: str) -> QPixmap:
 
 
 def _cover(c: completions.Completion) -> QPixmap:
-    path = c.poster_path()
-    pix = (load_scaled(path, COVER.width(), COVER.height()) if path else None) or QPixmap()
-    if pix.isNull():
-        return _placeholder(c.title)
-    scaled = pix.scaled(COVER, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-    x, y = (scaled.width() - COVER.width()) // 2, (scaled.height() - COVER.height()) // 2
-    return scaled.copy(max(0, x), max(0, y), COVER.width(), COVER.height())
+    return cover_pixmap(c.poster, COVER.width(), COVER.height()) or _placeholder(c.title)
 
 
 MONTHS = "JFMAMJJASOND"
 
 
 class MonthChart(QWidget):
-    """Twelve small bars: how many things you finished each month."""
+    """Twelve small bars with their counts: how many things you finished each month."""
+
+    STEP, BAR, BARS_H = 24, 16, 34   # px per month, bar width, tallest bar
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.counts = [0] * 12
-        self.setFixedSize(12 * 18, 46)
+        self.setFixedSize(12 * self.STEP, self.BARS_H + 28)
 
     def set_counts(self, counts: list[int]) -> None:
         self.counts = counts
@@ -88,16 +84,23 @@ class MonthChart(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         top = max(self.counts) or 1
         f = QFont()
-        f.setPixelSize(9)
-        p.setFont(f)
+        f.setPixelSize(10)
+        base = 12 + self.BARS_H                     # bottom of the bars
         for m, n in enumerate(self.counts):
-            x = m * 18 + 3
-            h = round(30 * n / top)
+            x = m * self.STEP + (self.STEP - self.BAR) // 2
+            h = max(round(self.BARS_H * n / top), 2)
             p.setPen(Qt.NoPen)
             p.setBrush(QColor("#4f7cff") if n else QColor("#2a2d36"))
-            p.drawRoundedRect(x, 32 - max(h, 2), 12, max(h, 2), 2, 2)
+            p.drawRoundedRect(x, base - h, self.BAR, h, 2, 2)
+            if n:  # the count, just above its bar
+                f.setBold(True)
+                p.setFont(f)
+                p.setPen(QColor("#dfe3ea"))
+                p.drawText(m * self.STEP, base - h - 13, self.STEP, 12, Qt.AlignCenter, str(n))
+            f.setBold(False)
+            p.setFont(f)
             p.setPen(QColor("#8a8f9c"))
-            p.drawText(x, 34, 12, 12, Qt.AlignCenter, MONTHS[m])
+            p.drawText(m * self.STEP, base + 2, self.STEP, 12, Qt.AlignCenter, MONTHS[m])
         p.end()
 
 
@@ -229,8 +232,17 @@ class CompletedPage(QWidget):
         menu.addAction("As image…", self.export_image)
         menu.addAction("As CSV…", self.export_csv)
         self.export_btn.setMenu(menu)
-        self.covers_btn = QPushButton("Fetch missing covers")
-        self.covers_btn.clicked.connect(lambda: self.fetch_covers.emit(None))
+        self.covers_btn = QToolButton()
+        self.covers_btn.setText("No cover…")
+        self.covers_btn.setPopupMode(QToolButton.InstantPopup)
+        covers_menu = QMenu(self.covers_btn)
+        covers_menu.addAction("Fetch missing covers", lambda: self.fetch_covers.emit(None))
+        covers_menu.addAction("Remove entries without a cover…", self.remove_no_cover)
+        self.covers_btn.setMenu(covers_menu)
+        self.hide_no_cover = QCheckBox("Hide no cover")
+        with db.session() as conn:
+            self.hide_no_cover.setChecked(db.get_setting(conn, "done_hide_no_cover") == "1")
+        self.hide_no_cover.toggled.connect(self._hide_toggled)
         self.sort_btn = QPushButton("Order by date")
         self.sort_btn.setToolTip("Forget your dragged order for this year")
         self.sort_btn.clicked.connect(self._reset_order)
@@ -240,7 +252,7 @@ class CompletedPage(QWidget):
         head.addSpacing(10)
         head.addWidget(self.count, 0, Qt.AlignBottom)
         head.addStretch(1)
-        for w in (imp, self.export_btn, self.covers_btn, self.sort_btn):
+        for w in (self.hide_no_cover, imp, self.export_btn, self.covers_btn, self.sort_btn):
             head.addWidget(w)
 
         self.list = QListWidget()
@@ -294,7 +306,10 @@ class CompletedPage(QWidget):
         self.count.setText(f"{n} {'entry' if n == 1 else 'entries'}"
                            + (f" · {missing} without cover" if missing else ""))
         self.list.clear()
+        hide = self.hide_no_cover.isChecked()
         for c in self.entries:
+            if hide and not c.poster_path():
+                continue
             text = f"{c.title}\n{c.date_text()}" + (f" · {c.platform}" if c.platform else "")
             it = QListWidgetItem(QIcon(_cover(c)), text)
             it.setData(IdRole, c.id)
@@ -334,6 +349,27 @@ class CompletedPage(QWidget):
         menu.exec(self.list.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------ changes
+
+    def _hide_toggled(self, on: bool) -> None:
+        with db.session() as conn:
+            db.set_setting(conn, "done_hide_no_cover", "1" if on else "0")
+        self.refresh()
+
+    def remove_no_cover(self) -> None:
+        """Remove the shown year's entries that still have no cover (after asking)."""
+        gone = [c for c in self.entries if not c.poster_path()]
+        if not gone:
+            return
+        names = ", ".join(c.title for c in gone[:6]) + ("…" if len(gone) > 6 else "")
+        where = f"from {self.year}" if self.year else "from Completed"
+        if QMessageBox.question(
+                self, "Remove entries",
+                f"Remove {len(gone)} entries without a cover {where}?\n\n{names}\n\n"
+                "Library items stay in the library; only these Completed entries go.") != QMessageBox.Yes:
+            return
+        with db.session() as conn:
+            completions.delete(conn, [c.id for c in gone])
+        self.changed.emit()
 
     def add(self) -> None:
         dlg = CompletionDialog(year=self.year, parent=self)

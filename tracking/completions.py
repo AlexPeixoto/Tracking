@@ -130,25 +130,34 @@ def parse_date(text: str, year_hint: int | None = None) -> str:
 
 # --------------------------------------------------------------------------- changes
 
-def link_library(conn: sqlite3.Connection, title: str, category: str | None = None) -> int | None:
-    """The library item with this title (same section when given), for its cover."""
+def library_index(conn: sqlite3.Connection) -> dict[tuple[str, str], int]:
+    """(section, title key) -> library item id, for matching names to the library."""
+    index: dict[tuple[str, str], int] = {}
+    for r in conn.execute("SELECT id, COALESCE(user_title, title) t, COALESCE(user_category, category) c "
+                          "FROM items WHERE source != ? ORDER BY id", (db.WANTED,)):
+        index.setdefault((r["c"], titles.normalize(titles.front_article(r["t"]))), r["id"])
+    return index
+
+
+def link_library(conn: sqlite3.Connection, title: str, category: str | None = None,
+                 index: dict[tuple[str, str], int] | None = None) -> int | None:
+    """The library item with this title (same section when given), for its cover.
+    Pass ``index`` (library_index) when matching many names, e.g. a CSV import."""
     key = titles.normalize(titles.front_article(title))
     if not key:
         return None
-    for i in db.list_items(conn):
-        if i.source == db.WANTED or (category and i.category != category):
-            continue
-        if titles.normalize(titles.front_article(i.title)) == key:
-            return i.id
-    return None
+    index = index if index is not None else library_index(conn)
+    if category:
+        return index.get((category, key))
+    return next((iid for (_, k), iid in index.items() if k == key), None)
 
 
 def add(conn: sqlite3.Connection, title: str, completed_on: str, category: str = "game",
         platform: str | None = None, item_id: int | None = None, notes: str | None = None,
-        link: bool = True) -> int:
+        link: bool = True, index: dict[tuple[str, str], int] | None = None) -> int:
     title = titles.front_article(title.strip())
     if item_id is None and link:
-        item_id = link_library(conn, title, category)
+        item_id = link_library(conn, title, category, index)
     if item_id is not None and platform is None:
         r = conn.execute("SELECT COALESCE(user_platform, platform) p FROM items WHERE id=?",
                          (item_id,)).fetchone()
@@ -285,6 +294,7 @@ def import_csv(conn: sqlite3.Connection, path: str, category: str = "game",
     is the platform. Lines already in the log (same title and date) are skipped."""
     year = year or _year_from_name(path)
     res = ImportResult()
+    index = library_index(conn)  # once, not per line
     for n, row in enumerate(read_csv(path), 1):
         row = [c.strip() for c in row]
         while row and not row[-1]:  # "Hades,20/03/2023,,," : trailing empty columns
@@ -318,7 +328,7 @@ def import_csv(conn: sqlite3.Connection, path: str, category: str = "game",
             res.skipped += 1
             continue
         platform = row[2].strip() or None if len(row) > 2 else None
-        cid = add(conn, title, completed_on, category, platform)
+        cid = add(conn, title, completed_on, category, platform, index=index)
         if get(conn, cid).item_id:
             res.linked += 1
         res.added += 1
@@ -353,7 +363,7 @@ def fetch_cover(conn: sqlite3.Connection, cid: int) -> bool:
     c = get(conn, cid)
     if not c:
         return False
-    settings = {r["key"]: r["value"] or "" for r in conn.execute("SELECT key, value FROM settings")}
+    settings = db.all_settings(conn)
     q = providers.Query(c.title, category=c.category, platform=c.platform, settings=settings)
     results = {}
     for p in providers.for_query(q):
@@ -376,10 +386,18 @@ def fetch_cover(conn: sqlite3.Connection, cid: int) -> bool:
     resp = session().get(md.poster_url, timeout=30)
     resp.raise_for_status()
     ctype = resp.headers.get("Content-Type", "")
-    name = f"done-{cid}{'.png' if 'png' in ctype else '.webp' if 'webp' in ctype else '.jpg'}"
+    name = _cover_name(cid, '.png' if 'png' in ctype else '.webp' if 'webp' in ctype else '.jpg')
+    _delete_own_covers(conn, [cid])
     (paths.posters_dir() / name).write_bytes(resp.content)
     conn.execute("UPDATE completions SET poster=? WHERE id=?", (name, cid))
     return True
+
+
+def _cover_name(cid: int, ext: str) -> str:
+    """A new file name for each new cover, so caches keyed by name never show the old one."""
+    import time
+
+    return f"done-{cid}-{int(time.time() * 1000) % 10**9}{ext}"
 
 
 def set_cover_file(conn: sqlite3.Connection, cid: int, src: str) -> None:
@@ -387,7 +405,7 @@ def set_cover_file(conn: sqlite3.Connection, cid: int, src: str) -> None:
     import shutil
 
     ext = os.path.splitext(src)[1].lower() or ".jpg"
-    name = f"done-{cid}{ext}"
+    name = _cover_name(cid, ext)
     _delete_own_covers(conn, [cid])
     shutil.copyfile(src, paths.posters_dir() / name)
     conn.execute("UPDATE completions SET poster=? WHERE id=?", (name, cid))

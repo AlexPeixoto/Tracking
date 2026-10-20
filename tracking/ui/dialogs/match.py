@@ -74,7 +74,7 @@ class MatchDialog(QDialog):
 
     def _query(self) -> providers.Query:
         with db.session() as conn:
-            settings = {r["key"]: r["value"] or "" for r in conn.execute("SELECT key, value FROM settings")}
+            settings = db.all_settings(conn)
         i = self.item
         return providers.Query(self.text.text().strip(), category=i.category, kind=i.kind,
                                platform=i.platform, season=i.season, settings=settings)

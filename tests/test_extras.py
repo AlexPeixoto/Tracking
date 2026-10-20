@@ -155,3 +155,36 @@ def test_big_covers_are_decoded_at_display_size(tmp_path, qt):
     # Decoded just big enough to fill a 2x card (340 x 480), not at 2400 x 3600.
     assert pm is not None and pm.width() == 340 and 480 <= pm.height() < 600
     assert load_scaled(str(tmp_path / "missing.jpg"), 170, 240) is None
+
+
+def test_export_sections_and_removing_coverless_entries(conn, qt, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from tracking import paths
+    from tracking.ui import year_image
+    from tracking.ui.completed_page import CompletedPage
+
+    g = completions.add(conn, "Okami", "2024-01-01")
+    completions.add(conn, "Frieren", "2024-02-01", "anime")
+    completions.add(conn, "Heat", "2024-03-01", "movie")
+    (paths.posters_dir() / "done-x.jpg").write_bytes(b"x")
+    conn.execute("UPDATE completions SET poster='done-x.jpg' WHERE id=?", (g,))
+    conn.commit()
+    entries = completions.list_year(conn, 2024)
+    opts = year_image.Options(sections=["game", "anime"])
+    assert [c.title for c in year_image.shown(entries, opts)] == ["Okami", "Frieren"]
+
+    dlg = year_image.ExportYearDialog(2024, entries)
+    assert set(dlg.sections) == {"game", "anime", "movie"}
+    dlg.sections["movie"].setChecked(False)
+    assert sorted(dlg._read().sections) == ["anime", "game"]
+    dlg.sections["movie"].setChecked(True)
+    assert dlg._read().sections == []                                   # all ticked = everything
+
+    page = CompletedPage()
+    page.show_year(2024)
+    page.hide_no_cover.setChecked(True)
+    assert page.list.count() == 1
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    page.remove_no_cover()
+    assert [c.title for c in completions.list_year(conn, 2024)] == ["Okami"]

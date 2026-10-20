@@ -39,6 +39,7 @@ from . import dialogs
 from .completed_page import CompletedPage
 from .grid import OFFLINE_TEXT, CardDelegate, ItemModel, ItemRole
 from .item_page import ItemPage
+from .planning_page import PlanningPage
 from .workers import CompletionCoversJob, EnrichJob, Job, LaunchJob, ScanJob, TransferJob
 
 SECTIONS = [(c.key, c.label) for c in categories.CATEGORIES]
@@ -49,6 +50,7 @@ SORTS = [("title", "Title"), ("avg", "Score: average"), ("best", "Score: highest
 NavRole = Qt.UserRole + 10
 WANT = "want"  # sidebar navigation: (WANT, category or None) is the "Want to acquire" list
 COMPLETED = "completed"  # sidebar navigation: (COMPLETED, year or None)
+PLANNING = "planning"  # sidebar navigation: (PLANNING, None), the Planning board
 FOCUS = "focus"  # (FOCUS, heading): a list picked elsewhere (Library health › Show)
 WATCHING = "watching"  # sidebar navigation: (WATCHING, None), series you're partway through
 BACKLOG = "backlog"  # sidebar navigation: (BACKLOG, category or None), owned and not finished
@@ -62,7 +64,8 @@ def view_of(item: db.Item) -> str | None:
 
 def in_backlog(item: db.Item) -> bool:
     """Yours (on disk or marked as got), not finished, not gone missing."""
-    return view_of(item) is None and not item.completed and not item.missing
+    return (view_of(item) is None and not item.completed and not item.missing
+            and item.plan_state != library.PLAN_DROPPED)
 
 
 def watching(item: db.Item) -> bool:
@@ -74,6 +77,14 @@ def watching(item: db.Item) -> bool:
 def played_order(item: db.Item) -> tuple:
     """"Time played" sort: most played first, never-played next, unknown last."""
     return (item.playtime_min is None, -(item.playtime_min or 0), item.title.lower())
+
+
+def _child_node(parent: QTreeWidgetItem, text: str, nav: tuple) -> QTreeWidgetItem:
+    """An entry under a sidebar section (a platform, a year...)."""
+    child = QTreeWidgetItem([text])
+    child.setData(0, NavRole, nav)
+    parent.addChild(child)
+    return child
 
 
 class MainWindow(QMainWindow):
@@ -287,7 +298,7 @@ class MainWindow(QMainWindow):
 
         # --- item page
         self.page = ItemPage()
-        self.page.back.connect(lambda: self.stack.setCurrentIndex(2 if self.nav[0] == COMPLETED else 0))
+        self.page.back.connect(lambda: self.stack.setCurrentIndex(self._list_page()))
         self.page.changed.connect(self._item_changed)
         self.page.refetch.connect(lambda i: self.start_job(EnrichJob([i], force=True)))
         self.page.open_folder.connect(self.open_item)
@@ -304,6 +315,14 @@ class MainWindow(QMainWindow):
         self.done_page.open_item.connect(self.show_item)
         self.done_page.fetch_covers.connect(lambda ids: self.start_job(CompletionCoversJob(ids)))
         self.stack.addWidget(self.done_page)
+
+        # --- planning board (index 3)
+        self.plan_page = PlanningPage()
+        self.plan_page.open_item.connect(self.show_item)
+        self.plan_page.play.connect(self.play)
+        self.plan_page.changed.connect(self.reload)
+        self.plan_page.show_items.connect(self.show_focus)
+        self.stack.addWidget(self.plan_page)
 
     def _build_shortcuts(self):
         """Keyboard: Space completes the selected cards, Ctrl+F searches, Esc / Alt+Left go
@@ -451,7 +470,7 @@ class MainWindow(QMainWindow):
         self.search.selectAll()
 
     def _back_from_page(self):
-        self.stack.setCurrentIndex(2 if self.nav[0] == COMPLETED else 0)
+        self.stack.setCurrentIndex(self._list_page())
         self.grid.setFocus()
 
     def _build_status(self):
@@ -515,6 +534,24 @@ class MainWindow(QMainWindow):
         self.apply_filter()
         if self.nav[0] == COMPLETED:
             self.done_page.show_year(self.nav[1])
+        elif self.nav[0] == PLANNING:
+            self.plan_page.refresh()
+
+    def _list_page(self) -> int:
+        """The page to go back to from an item: the board, a Completed year, or the grid."""
+        return {COMPLETED: 2, PLANNING: 3}.get(self.nav[0], 0)
+
+    def _top_node(self, text: str, nav: tuple, tip: str | None = None) -> QTreeWidgetItem:
+        """A bold top-level sidebar entry."""
+        node = QTreeWidgetItem([text])
+        node.setData(0, NavRole, nav)
+        f = node.font(0)
+        f.setBold(True)
+        node.setFont(0, f)
+        if tip:
+            node.setToolTip(0, tip)
+        self.sidebar.addTopLevelItem(node)
+        return node
 
     def _rebuild_sidebar(self, counts: dict[str, int], plats: dict[str, int],
                          wanted: dict[str, int] | None = None, steam_games: int = 0,
@@ -525,20 +562,20 @@ class MainWindow(QMainWindow):
         everything.setData(0, NavRole, (None, None))
         self.sidebar.addTopLevelItem(everything)
         current = everything
+        # Planning: what's next / on / parked (the board), right under All items.
+        on_board = sum(1 for i in self.all_items if i.plan_state in
+                       (library.PLAN_NEXT, library.PLAN_PLAYING, library.PLAN_HOLD))
+        plan = self._top_node(f"Planning   {on_board}", (PLANNING, None),
+                              "Up next, Playing / Watching, On hold and Done this year")
+        if self.nav == (PLANNING, None):
+            current = plan
         for key, label in SECTIONS:
-            node = QTreeWidgetItem([f"{label}   {counts.get(key, 0)}"])
-            node.setData(0, NavRole, (key, None))
-            f = node.font(0)
-            f.setBold(True)
-            node.setFont(0, f)
-            self.sidebar.addTopLevelItem(node)
+            node = self._top_node(f"{label}   {counts.get(key, 0)}", (key, None))
             if self.nav == (key, None):
                 current = node
             if key == "game":
                 for plat, n in plats.items():
-                    child = QTreeWidgetItem([f"{plat}   {n}"])
-                    child.setData(0, NavRole, ("game", plat))
-                    node.addChild(child)
+                    child = _child_node(node, f"{plat}   {n}", ("game", plat))
                     if self.nav == ("game", plat):
                         current = child
                 node.setExpanded(True)
@@ -546,13 +583,8 @@ class MainWindow(QMainWindow):
         # Continue watching: series you're partway through (only when there are some).
         started = sum(1 for i in self.all_items if watching(i))
         if started or self.nav[0] == WATCHING:
-            node = QTreeWidgetItem([f"Continue watching   {started}"])
-            node.setData(0, NavRole, (WATCHING, None))
-            f = node.font(0)
-            f.setBold(True)
-            node.setFont(0, f)
-            node.setToolTip(0, "Series you've started playing from here, most recent first")
-            self.sidebar.addTopLevelItem(node)
+            node = self._top_node(f"Continue watching   {started}", (WATCHING, None),
+                                  "Series you've started playing from here, most recent first")
             if self.nav == (WATCHING, None):
                 current = node
 
@@ -561,71 +593,45 @@ class MainWindow(QMainWindow):
         for i in self.all_items:
             if in_backlog(i):
                 backlog[i.category] = backlog.get(i.category, 0) + 1
-        node = QTreeWidgetItem([f"Backlog   {sum(backlog.values())}"])
-        node.setData(0, NavRole, (BACKLOG, None))
-        f = node.font(0)
-        f.setBold(True)
-        node.setFont(0, f)
-        node.setToolTip(0, "What you have and haven't finished. Try Sort: Shortest first.")
-        self.sidebar.addTopLevelItem(node)
+        node = self._top_node(f"Backlog   {sum(backlog.values())}", (BACKLOG, None),
+                              "What you have and haven't finished. Try Sort: Shortest first.")
         if self.nav == (BACKLOG, None):
             current = node
         for key, label in SECTIONS:
             if backlog.get(key):
-                child = QTreeWidgetItem([f"{label}   {backlog[key]}"])
-                child.setData(0, NavRole, (BACKLOG, key))
-                node.addChild(child)
+                child = _child_node(node, f"{label}   {backlog[key]}", (BACKLOG, key))
                 if self.nav == (BACKLOG, key):
                     current = child
 
         # Completed: everything you finished, per year (also entries outside the library).
         done_years = done_years or {}
-        done = QTreeWidgetItem([f"Completed   {sum(done_years.values())}"])
-        done.setData(0, NavRole, (COMPLETED, None))
-        f = done.font(0)
-        f.setBold(True)
-        done.setFont(0, f)
-        done.setToolTip(0, "What you finished, by year. Import year CSVs, edit dates, "
-                           "export a year as an image.")
-        self.sidebar.addTopLevelItem(done)
+        done = self._top_node(f"Completed   {sum(done_years.values())}", (COMPLETED, None),
+                              "What you finished, by year. Import year CSVs, edit dates, "
+                              "export a year as an image.")
         if self.nav == (COMPLETED, None):
             current = done
         for year, n in done_years.items():
-            child = QTreeWidgetItem([f"{year}   {n}"])
-            child.setData(0, NavRole, (COMPLETED, year))
-            done.addChild(child)
+            child = _child_node(done, f"{year}   {n}", (COMPLETED, year))
             if self.nav == (COMPLETED, year):
                 current = child
         done.setExpanded(True)
 
         # Steam: the games your Steam accounts own, apart from the library.
-        node = QTreeWidgetItem([f"Steam   {steam_games}"])
-        node.setData(0, NavRole, (STEAM, None))
-        f = node.font(0)
-        f.setBold(True)
-        node.setFont(0, f)
-        node.setToolTip(0, "Games from your Steam account, with play time "
-                           "(Locations › Add Steam account)")
-        self.sidebar.addTopLevelItem(node)
+        node = self._top_node(f"Steam   {steam_games}", (STEAM, None),
+                              "Games from your Steam account, with play time "
+                              "(Locations › Add Steam account)")
         if self.nav == (STEAM, None):
             current = node
 
         # "Want to acquire": things you don't have yet, per section.
         wanted = wanted or {}
-        want = QTreeWidgetItem([f"Want to acquire   {sum(wanted.values())}"])
-        want.setData(0, NavRole, (WANT, None))
-        f = want.font(0)
-        f.setBold(True)
-        want.setFont(0, f)
-        self.sidebar.addTopLevelItem(want)
+        want = self._top_node(f"Want to acquire   {sum(wanted.values())}", (WANT, None))
         if self.nav == (WANT, None):
             current = want
         for key, label in SECTIONS:
             if key == "unknown":
                 continue
-            child = QTreeWidgetItem([f"{label}   {wanted.get(key, 0)}"])
-            child.setData(0, NavRole, (WANT, key))
-            want.addChild(child)
+            child = _child_node(want, f"{label}   {wanted.get(key, 0)}", (WANT, key))
             if self.nav == (WANT, key):
                 current = child
         want.setExpanded(True)
@@ -642,6 +648,10 @@ class MainWindow(QMainWindow):
         if self.nav[0] == COMPLETED:
             self.done_page.show_year(self.nav[1])
             self.stack.setCurrentIndex(2)
+            return
+        if self.nav[0] == PLANNING:
+            self.plan_page.refresh()
+            self.stack.setCurrentIndex(3)
             return
         self.stack.setCurrentIndex(0)
         self.apply_filter()
@@ -807,7 +817,7 @@ class MainWindow(QMainWindow):
             self._fill_page(item)
 
     def _item_deleted(self, item_id: int):
-        self.stack.setCurrentIndex(2 if self.nav[0] == COMPLETED else 0)
+        self.stack.setCurrentIndex(self._list_page())
         self.reload()
 
     # ------------------------------------------------------------------ item page
@@ -961,6 +971,7 @@ class MainWindow(QMainWindow):
                 menu.addAction("Open details", lambda: self.show_item(ids[0]))
                 menu.addSeparator()
             menu.addAction("Got it (move to library)", lambda: self.acquire(ids))
+            menu.addMenu(self._plan_menu(ids))
             menu.addAction("Remove from list", lambda: self.remove_wanted(ids))
             menu.addAction("Refetch metadata", lambda: self.start_job(EnrichJob(ids, force=True)))
             menu.exec(self.grid.viewport().mapToGlobal(pos))
@@ -983,6 +994,7 @@ class MainWindow(QMainWindow):
             menu.addAction("Mark as not completed", lambda: self.set_completed(ids, False))
         menu.addAction("Refetch metadata", lambda: self.start_job(EnrichJob(ids, force=True)))
         menu.addMenu(self._move_menu(ids))
+        menu.addMenu(self._plan_menu(ids))
         if any(i.source == "disk" for i in items):
             menu.addSeparator()
             menu.addAction("Copy to…", lambda: self.transfer(ids, move=False))
@@ -1022,6 +1034,21 @@ class MainWindow(QMainWindow):
         with db.session() as conn:
             library.remove_items(conn, ids)
         self.stack.setCurrentIndex(0)
+        self.reload()
+
+    def _plan_menu(self, ids: list[int]) -> QMenu:
+        """Right-click › Plan: put items on the Planning board (or take them off)."""
+        menu = QMenu("Plan", self)
+        for state, label in ((library.PLAN_NEXT, "Up next"), (library.PLAN_PLAYING, "Playing / Watching"),
+                             (library.PLAN_HOLD, "On hold"), (library.PLAN_DROPPED, "Dropped")):
+            menu.addAction(label, lambda s=state: self.set_plan(ids, s))
+        menu.addSeparator()
+        menu.addAction("Take off the board", lambda: self.set_plan(ids, None))
+        return menu
+
+    def set_plan(self, ids: list[int], state: str | None):
+        with db.session() as conn:
+            library.set_plan(conn, ids, state)
         self.reload()
 
     def _move_menu(self, ids: list[int]) -> QMenu:

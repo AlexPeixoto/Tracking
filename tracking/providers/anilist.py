@@ -54,16 +54,7 @@ def _fetcher(title: str):
 
 def _search(title: str, year: int | None, kind: str | None = None) -> Metadata | None:
     """``kind`` ("series" / "movie") steers the match towards TV or movie entries."""
-    def fetch():
-        _limit.wait()
-        r = session().post(API_URL, json={"query": QUERY, "variables": {"search": title}},
-                           timeout=20)
-        if r.status_code == 429:
-            raise ProviderError("AniList rate limit hit, try again in a minute")
-        r.raise_for_status()
-        return r.json()
-
-    media = _media(title, fetch)
+    media = _media(title, _fetcher(title))
     best = best_match(
         title, year, media,
         names=lambda m: [*(m.get("title") or {}).values(), *(m.get("synonyms") or [])],

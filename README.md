@@ -33,6 +33,9 @@ remembers what you've finished, even when the drive is unplugged.
   each year's stats, and **export a year as a cover-grid image**.
 - 📚 **Backlog**: what you own and haven't finished, with a *Shortest first* sort for
   "what next?".
+- 🗂️ **Planning board**: *Up next*, *Playing / Watching*, *On hold* and *Done this year* for
+  games, anime, movies and TV (show one section or combine several). Drag cards between columns; playing
+  something moves it to *Playing* by itself, and each column adds up the hours left.
 - 🩺 **Library health**: items without a cover or score, games without a platform,
   possible duplicates and missing files, each one click away from a fix.
 - 🛒 **Want to acquire**: search any service and keep a wish list; it moves into your
@@ -56,6 +59,10 @@ remembers what you've finished, even when the drive is unplugged.
   plug it in as another letter and nothing breaks.
 
 ## Screenshots
+
+<p align="center"><img src="docs/images/planning.png" alt="Planning board" width="100%"><br>
+<sub><b>Planning</b>: what's next, what you're on, what's parked and what you finished this year,
+with progress and hours left on every card.</sub></p>
 
 <table>
   <tr>
@@ -130,6 +137,7 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 | **Right-click** | Move to another section / platform, complete, refetch, remove |
 | **Export list…** | A spreadsheet of the items missing a cover or scores, or of what's shown |
 | **Library health…** (Ctrl+H) | What needs a look, with *Show* and *Fetch again* |
+| **Right-click › Plan** | Put items on the Planning board (Up next, Playing, On hold) or drop them |
 | **▶ Play** | On a game's page or right-click (Ctrl+Enter in the grid). Emulators: Settings › Emulators |
 | **Find match…** | On an item's page or right-click: search by hand and pick the right result |
 | **Hide offline** | Hide what's on unplugged drives; drives are re-checked every 25 s |
@@ -154,7 +162,8 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 
 Everything you finish is logged with the day you marked it. The **Completed** section has one
 page per year: drag covers to reorder, double-click to edit the name, date, section, platform
-or notes, right-click to pick your own cover. Each year shows what you finished per section,
+or notes, right-click to pick your own cover. *Hide no cover* hides entries still without one;
+*No cover…* fetches them again or removes them from the year. Each year shows what you finished per section,
 the hours it took (Steam play time or HowLongToBeat for games, runtime for the rest) and a
 month-by-month chart.
 
@@ -187,6 +196,7 @@ its exact size in pixels:
 | Title · labels | "Completed in 2024" on top; title and/or date under each cover |
 | Corner stamp | A small "2024 · 14 completed" badge in any corner |
 | Without a cover | Shown as a tile with the name, or left out |
+| Include | Pick the sections in the picture (e.g. games only) |
 | Presets | Save your settings by name ("Twitter grid", "Big poster") and switch between them |
 | Format | PNG or JPG |
 

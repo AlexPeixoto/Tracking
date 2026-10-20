@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from PySide6.QtCore import QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .. import completions, db
+from .. import categories, completions, db
 from .grid import load_scaled
 
 SETTING = "year_image"
@@ -59,6 +59,7 @@ class Options:
     stamp: str = "none"              # a small "2024 · 14 completed" badge in a corner
     stamp_text: str = "{year} · {count} completed"
     skip_no_cover: bool = False      # leave out entries without a cover (instead of a name tile)
+    sections: list[str] = field(default_factory=list)  # e.g. ["game"]; empty = every section
 
     @property
     def cover_height(self) -> int:
@@ -124,7 +125,9 @@ def layout(n: int, opts: Options) -> tuple[int, int, int, int, int, int]:
 
 def shown(entries: list[completions.Completion], opts: Options) -> list[completions.Completion]:
     """The entries that go in the picture."""
-    return [c for c in entries if c.poster_path()] if opts.skip_no_cover else list(entries)
+    return [c for c in entries
+            if (not opts.skip_no_cover or c.poster_path())
+            and (not opts.sections or c.category in opts.sections)]
 
 
 def render(entries: list[completions.Completion], year: int, opts: Options) -> QImage:
@@ -236,6 +239,16 @@ class ExportYearDialog(QDialog):
         self.shape = QComboBox()
         self.shape.addItems(SHAPES)
         self.crop = QCheckBox("Fill the shape (crop covers that don't fit)")
+        self.sections: dict[str, QCheckBox] = {}
+        sections_row = QHBoxLayout()
+        present = {c.category for c in entries}
+        for c in categories.CATEGORIES:
+            if c.key in present:
+                box = QCheckBox(c.label)
+                box.setChecked(True)
+                self.sections[c.key] = box
+                sections_row.addWidget(box)
+        sections_row.addStretch(1)
         self.skip = QCheckBox("Leave out entries without a cover")
         self.skip.setToolTip("Otherwise they show as a tile with their name")
         self.gap = QSpinBox()
@@ -268,6 +281,8 @@ class ExportYearDialog(QDialog):
         self.stamp_text.setToolTip("{year} and {count} are filled in")
         stamp_row.addWidget(self.stamp)
         stamp_row.addWidget(self.stamp_text, 1)
+        if len(self.sections) > 1:
+            form.addRow("Include", sections_row)
         form.addRow("Columns", self.columns)
         form.addRow("Cover width", self.cover_width)
         form.addRow("Cover shape", self.shape)
@@ -320,7 +335,7 @@ class ExportYearDialog(QDialog):
             w.valueChanged.connect(self._changed)
         for w in (self.shape, self.background, self.labels, self.stamp):
             w.currentIndexChanged.connect(self._changed)
-        for w in (self.crop, self.heading, self.skip):
+        for w in (self.crop, self.heading, self.skip, *self.sections.values()):
             w.toggled.connect(self._changed)
         self.heading_text.textChanged.connect(self._changed)
         self.stamp_text.textChanged.connect(self._changed)
@@ -333,6 +348,8 @@ class ExportYearDialog(QDialog):
         self.shape.setCurrentText(o.shape if o.shape in SHAPES else next(iter(SHAPES)))
         self.crop.setChecked(o.crop)
         self.skip.setChecked(o.skip_no_cover)
+        for key, box in self.sections.items():
+            box.setChecked(not o.sections or key in o.sections)
         self.gap.setValue(o.gap)
         self.margin.setValue(o.margin)
         if self.background.findData(o.background) < 0:
@@ -347,12 +364,18 @@ class ExportYearDialog(QDialog):
         self.heading_text.setCursorPosition(0)
 
     def _read(self) -> Options:
-        return Options(self.columns.value(), self.cover_width.value(), self.shape.currentText(),
-                       self.gap.value(), self.margin.value(), self.background.currentData(),
-                       self.heading.isChecked(), self.heading_text.text() or "Completed in {year}",
-                       self.labels.currentData(), self.crop.isChecked(), self.stamp.currentData(),
-                       self.stamp_text.text() or "{year} · {count} completed",
-                       self.skip.isChecked())
+        chosen = [k for k, box in self.sections.items() if box.isChecked()]
+        return Options(
+            columns=self.columns.value(), cover_width=self.cover_width.value(),
+            shape=self.shape.currentText(), gap=self.gap.value(), margin=self.margin.value(),
+            background=self.background.currentData(), heading=self.heading.isChecked(),
+            heading_text=self.heading_text.text() or "Completed in {year}",
+            labels=self.labels.currentData(), crop=self.crop.isChecked(),
+            stamp=self.stamp.currentData(),
+            stamp_text=self.stamp_text.text() or "{year} · {count} completed",
+            skip_no_cover=self.skip.isChecked(),
+            # all ticked = no filter, so a section added later is included by default
+            sections=[] if len(chosen) == len(self.sections) else chosen)
 
     # ------------------------------------------------------------------ presets
 

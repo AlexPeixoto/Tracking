@@ -120,6 +120,15 @@ def draw_placeholder(p: QPainter, rect: QRect, item: db.Item) -> None:
 
 posters = PosterCache()
 
+
+def cover_pixmap(name: str | None, w: int, h: int) -> QPixmap | None:
+    """A cover filling exactly w x h (centre-cropped), from the shared cache."""
+    pm = posters.get(name, w, h)
+    if pm is None:
+        return None
+    x, y = (pm.width() - w) // 2, (pm.height() - h) // 2
+    return pm.copy(max(0, x), max(0, y), w, h)
+
 # How a disconnected drive shows on cards (setting "offline_style").
 OFFLINE_TEXT, OFFLINE_ICON, OFFLINE_NONE = "text", "icon", "none"
 OFFLINE_STYLES = [(OFFLINE_TEXT, "Text over the cover (dimmed)"),

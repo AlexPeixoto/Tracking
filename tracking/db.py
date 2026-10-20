@@ -197,6 +197,9 @@ MIGRATIONS = [
     ("items", "playtime_local_min", "REAL"),  # time in games started from Tracking
     ("completions", "hours", "REAL"),       # play time when you finished it (Steam / timed)
     ("items", "copy_of", "INTEGER"),        # a copy made with Copy to… (of this item)
+    ("items", "plan_state", "TEXT"),        # Planning board: next / playing / hold / dropped
+    ("items", "plan_position", "INTEGER"),  # order within "Up next"
+    ("items", "plan_changed", "TEXT"),      # when it last moved on the board
 ]
 
 
@@ -319,6 +322,8 @@ class Item:
     last_episode: int | None = None      # series: last episode played from here
     last_episode_season: int | None = None
     last_watched: str | None = None
+    plan_state: str | None = None        # Planning board column (None = not on the board)
+    plan_position: int | None = None
 
     @property
     def avg_score(self) -> float | None:
@@ -352,6 +357,7 @@ SELECT id, volume_uid, rel_path, is_dir,
        last_played,
        install_state, COALESCE(user_launch, launch_path) AS launch_path, launch_args,
        last_launched, launch_count, last_episode, last_episode_season, last_watched,
+       plan_state, plan_position,
        rating, rating_max, rating_source, external_url, poster, summary, missing,
        (SELECT COUNT(*) FROM media_files m WHERE m.item_id = items.id) AS video_count
 FROM items
@@ -392,6 +398,8 @@ def row_to_item(row: sqlite3.Row) -> Item:
         last_episode=row["last_episode"],
         last_episode_season=row["last_episode_season"],
         last_watched=row["last_watched"],
+        plan_state=row["plan_state"],
+        plan_position=row["plan_position"],
         rating=row["rating"],
         rating_max=row["rating_max"],
         rating_source=row["rating_source"],
@@ -402,6 +410,11 @@ def row_to_item(row: sqlite3.Row) -> Item:
         detected_title=row["detected_title"],
         video_count=row["video_count"],
     )
+
+
+def all_settings(conn: sqlite3.Connection) -> dict[str, str]:
+    """Every setting (keys, emulators, filters...) as {key: value}, "" for unset."""
+    return {r["key"]: r["value"] or "" for r in conn.execute("SELECT key, value FROM settings")}
 
 
 def list_items(conn: sqlite3.Connection, category: str | None = None,

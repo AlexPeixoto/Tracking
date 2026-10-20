@@ -130,7 +130,7 @@ def search_titles(item: db.Item) -> list[str]:
 
 
 def make_query(conn: sqlite3.Connection, item: db.Item) -> providers.Query:
-    settings = {r["key"]: r["value"] or "" for r in conn.execute("SELECT key, value FROM settings")}
+    settings = db.all_settings(conn)
     return providers.Query(item.title, year=item.year, category=item.category, kind=item.kind,
                            platform=item.platform, season=item.season,
                            steam_appid=item.steam_appid, settings=settings)

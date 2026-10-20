@@ -18,6 +18,9 @@ def set_completed(conn: sqlite3.Connection, item_ids: list[int], done: bool) -> 
 
     db.set_completed(conn, item_ids, done)
     completions.on_items_completed(conn, item_ids, done)
+    if done:  # finished: off the board (it shows under "Done this year" from the Completed log)
+        conn.executemany("UPDATE items SET plan_state=NULL, plan_position=NULL WHERE id=?",
+                         [(i,) for i in item_ids])
 
 
 def edit_item(conn: sqlite3.Connection, item: db.Item, *, title: str, category: str,
@@ -203,3 +206,57 @@ def health(items: list[db.Item], copies: dict[int, int] | None = None) -> list[H
                     "Files moved or deleted. A rescan re-links moved ones.",
                     [i.id for i in lib if i.missing]),
     ]
+
+
+# --------------------------------------------------------------------------- planning
+
+PLAN_NEXT, PLAN_PLAYING, PLAN_HOLD, PLAN_DROPPED = "next", "playing", "hold", "dropped"
+PLAN_STATES = (PLAN_NEXT, PLAN_PLAYING, PLAN_HOLD, PLAN_DROPPED)
+
+
+def set_plan(conn: sqlite3.Connection, item_ids: list[int], state: str | None,
+             position: int | None = None) -> None:
+    """Put items in a Planning column (None takes them off the board). Moving finished
+    items back to a column un-completes them (their latest Completed entry goes)."""
+    from datetime import datetime
+
+    if state is not None and state not in PLAN_STATES:
+        raise ValueError(state)
+    now = datetime.now().isoformat(timespec="seconds")
+    done = [r["id"] for r in conn.execute(
+        f"SELECT id FROM items WHERE completed=1 AND id IN ({','.join('?' * len(item_ids))})", item_ids)]
+    if done and state in (PLAN_NEXT, PLAN_PLAYING, PLAN_HOLD):
+        set_completed(conn, done, False)
+    if state == PLAN_NEXT:
+        # New arrivals go to the end of the queue unless a spot was given.
+        end = conn.execute("SELECT COALESCE(MAX(plan_position), -1) FROM items "
+                           "WHERE plan_state=?", (PLAN_NEXT,)).fetchone()[0]
+        for n, iid in enumerate(item_ids):
+            conn.execute("UPDATE items SET plan_state=?, plan_position=?, plan_changed=? WHERE id=?",
+                         (state, end + 1 + n, now, iid))
+        if position is not None:
+            queue = [r["id"] for r in conn.execute(
+                "SELECT id FROM items WHERE plan_state=? AND id NOT IN "
+                f"({','.join('?' * len(item_ids))}) ORDER BY plan_position, id",
+                (PLAN_NEXT, *item_ids))]
+            queue[position:position] = item_ids
+            order_plan(conn, queue)
+    else:
+        conn.executemany("UPDATE items SET plan_state=?, plan_position=NULL, plan_changed=? WHERE id=?",
+                         [(state, now, i) for i in item_ids])
+
+
+def order_plan(conn: sqlite3.Connection, item_ids: list[int]) -> None:
+    """Your order for "Up next"."""
+    conn.executemany("UPDATE items SET plan_position=? WHERE id=?",
+                     [(n, i) for n, i in enumerate(item_ids)])
+
+
+def started(conn: sqlite3.Connection, item_id: int) -> None:
+    """You played it (Play / an episode): it's "Playing" now, unless finished or dropped."""
+    from datetime import datetime
+
+    conn.execute("UPDATE items SET plan_state=?, plan_position=NULL, plan_changed=? WHERE id=? "
+                 "AND completed=0 AND COALESCE(plan_state, '') NOT IN (?, ?)",
+                 (PLAN_PLAYING, datetime.now().isoformat(timespec="seconds"), item_id,
+                  PLAN_PLAYING, PLAN_DROPPED))

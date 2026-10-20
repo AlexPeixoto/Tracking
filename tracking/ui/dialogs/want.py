@@ -136,7 +136,7 @@ class WantDialog(QDialog):
         self._candidates = []
         self.status.setText(f"Searching for “{text}”…")
         with db.session() as conn:
-            settings = {r["key"]: r["value"] or "" for r in conn.execute("SELECT key, value FROM settings")}
+            settings = db.all_settings(conn)
         job = _Search(self._search_no, providers.Query(text, category=self.category, settings=settings))
         job.signals.results.connect(self._show_results)
         job.signals.failed.connect(self._show_error)

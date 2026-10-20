@@ -48,6 +48,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `ui/item_page.py` | Item page: completion, scores, time, episodes, summary, edits |
 | `ui/dialogs/match.py` | Find match: search every service (`providers.search_all`) and use a result as the item's search title (`library.use_match`) |
 | `ui/dialogs/health.py` | Library health: checks from `library.health()` (no cover / score / platform, duplicates, missing), each with Show / Fetch again |
+| `ui/planning_page.py` | Planning board: Up next / Playing / On hold (items.plan_state, `library.set_plan`) and Done this year (the Completed log); drag & drop, section chips |
 | `ui/completed_page.py` | Completed section: a year's covers (drag to reorder), add / edit / remove, CSV import / export |
 | `ui/year_image.py` | "Export year as image": the year's covers as one grid picture (columns, cover size / shape, gap, margin, background, heading, labels), drawn with Qt |
 | `ui/dialogs/` | `locations.py` (add / manage / rescan, add Steam account), `settings.py` (keys, export/import), `log_viewer.py` |

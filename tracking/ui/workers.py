@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from PySide6.QtCore import QObject, QRunnable, Signal
 
-from .. import categories, db, enrich, scan, volumes
+from .. import categories, db, enrich, library, scan, volumes
 from ..providers import ProviderError
 
 EPISODIC = [c.key for c in categories.CATEGORIES if c.episodic]
@@ -344,6 +344,7 @@ class LaunchJob(Job):
             launcher.record_watch(conn, la.item_id, *la.episode)
         else:
             launcher.record(conn, la.item_id)
+        library.started(conn, la.item_id)  # Planning: it's "Playing" now
         conn.commit()
         self.signals.item_changed.emit(la.item_id)
         return f"Started {la.what}"
