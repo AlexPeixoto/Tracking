@@ -24,6 +24,7 @@ for "Update metadata" so their covers (and scores) are fetched again.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import sqlite3
 import tempfile
@@ -33,6 +34,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__, db, paths, providers
+
+log = logging.getLogger(__name__)
 
 FORMAT = 1
 DB_NAME = "library.sqlite3"
@@ -50,6 +53,7 @@ class ImportResult:
     updated: int = 0
     covers: int = 0
     need_metadata: int = 0  # items marked for "Update metadata"
+    backup: Path | None = None  # replace: your library as it was, saved first
 
     def __str__(self) -> str:
         parts = [f"{self.added} items added"]
@@ -58,7 +62,10 @@ class ImportResult:
         parts.append(f"{self.covers} covers")
         if self.need_metadata:
             parts.append(f"{self.need_metadata} items need “Update metadata” for covers")
-        return ", ".join(parts)
+        text = ", ".join(parts)
+        if self.backup:
+            text += f". Your previous library was saved to {self.backup}"
+        return text
 
 
 # --------------------------------------------------------------------------- export
@@ -136,10 +143,78 @@ def import_zip(zip_path: Path, mode: str) -> ImportResult:
         src = db.connect(tmp / DB_NAME)
         try:
             if mode == "replace":
-                return _replace(src, covers_dir)
+                backup = safety_backup()   # a wrong file shouldn't cost you your library
+                result = _replace(src, covers_dir)
+                result.backup = backup
+                return result
             return _merge(src, covers_dir)
         finally:
             src.close()
+
+
+KEEP_BACKUPS = 3
+
+
+def backups_dir() -> Path:
+    folder = paths.data_dir() / "backups"
+    folder.mkdir(exist_ok=True)
+    return folder
+
+
+def _backup(prefix: str, images: bool, keep: int) -> Path:
+    """A full export (keys included: it's your own copy) named ``prefix``-<time>.zip in the
+    backups folder; only the newest ``keep`` of that kind stay."""
+    folder = backups_dir()
+    path = folder / f"{prefix}-{datetime.now():%Y-%m-%d-%H%M%S}.zip"
+    export_zip(path, images=images, credentials=True)
+    for old in sorted(folder.glob(f"{prefix}-*.zip"))[:-keep]:
+        old.unlink(missing_ok=True)
+    return path
+
+
+def safety_backup() -> Path:
+    """Everything as it is now (covers included), before a replace."""
+    return _backup("before-import", images=True, keep=KEEP_BACKUPS)
+
+
+# Automatic backups (Settings › General): how often, how many to keep, covers or not.
+AUTO, AUTO_KEEP, AUTO_IMAGES, AUTO_LAST = ("auto_backup", "auto_backup_keep",
+                                           "auto_backup_images", "auto_backup_last")
+AUTO_EVERY = {"off": None, "daily": 1, "weekly": 7}
+AUTO_DEFAULT = "weekly"
+
+
+def auto_backup_due(conn: sqlite3.Connection, now=None) -> bool:
+    from datetime import timedelta
+
+    days = AUTO_EVERY.get(db.get_setting(conn, AUTO, AUTO_DEFAULT) or AUTO_DEFAULT)
+    if not days:
+        return False
+    last = db.get_setting(conn, AUTO_LAST)
+    if not last:
+        return True
+    now = now or datetime.now()
+    try:
+        return now - datetime.fromisoformat(last) >= timedelta(days=days) - timedelta(minutes=5)
+    except ValueError:
+        return True
+
+
+def auto_backup(force: bool = False) -> Path | None:
+    """Back up now if it's due (or ``force``). Returns the file, or None if not due."""
+    with db.session() as conn:
+        if not force and not auto_backup_due(conn):
+            return None
+        images = db.get_setting(conn, AUTO_IMAGES) == "1"
+        try:
+            keep = max(1, int(db.get_setting(conn, AUTO_KEEP, "5") or 5))
+        except ValueError:
+            keep = 5
+    path = _backup("auto", images=images, keep=keep)
+    with db.session() as conn:
+        db.set_setting(conn, AUTO_LAST, datetime.now().isoformat(timespec="seconds"))
+    log.info("automatic backup: %s", path)
+    return path
 
 
 def _replace(src: sqlite3.Connection, covers_dir: Path) -> ImportResult:

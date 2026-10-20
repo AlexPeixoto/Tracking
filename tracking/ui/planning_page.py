@@ -42,16 +42,7 @@ SETTING = "plan_sections"
 FILTERS = [("", "All"), ("game", "Games"), ("anime", "Anime"), ("movie", "Movies"), ("tv", "TV")]
 
 
-def remaining_hours(item: db.Item) -> float:
-    """Roughly how long is left: HLTB minus time played, episodes not played yet, runtime."""
-    if item.category == "game":
-        hltb = item.hltb_hours or 0
-        return max(hltb - (item.playtime_min or 0) / 60, 0) if hltb else 0
-    total = item.total_hours or 0
-    if item.kind != "movie" and item.video_count and item.last_episode:
-        left = max(item.video_count - item.last_episode, 0)
-        return total * left / item.video_count
-    return total
+remaining_hours = library.remaining_hours
 
 
 def progress(item: db.Item) -> str:

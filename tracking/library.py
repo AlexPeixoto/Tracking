@@ -65,6 +65,7 @@ def move_items(conn: sqlite3.Connection, item_ids: list[int], category: str,
 
 def remove_items(conn: sqlite3.Connection, item_ids: list[int]) -> None:
     """Forget items (files on disk are never touched) and delete their covers."""
+    _keep_completion_covers(conn, item_ids)
     _delete_covers(conn, "SELECT poster FROM items WHERE id=?", [(i,) for i in item_ids])
     conn.executemany("DELETE FROM items WHERE id=?", [(i,) for i in item_ids])
 
@@ -73,6 +74,9 @@ def remove_locations(conn: sqlite3.Connection, root_ids: list[int], keep_items: 
     """Stop scanning locations. Their items stay in the library (with completion
     and notes) unless ``keep_items`` is False."""
     if not keep_items:
+        gone = [r["id"] for root in root_ids
+                for r in conn.execute("SELECT id FROM items WHERE root_id=?", (root,))]
+        _keep_completion_covers(conn, gone)
         _delete_covers(conn, "SELECT poster FROM items WHERE root_id=?", [(r,) for r in root_ids])
         conn.executemany("DELETE FROM items WHERE root_id=?", [(r,) for r in root_ids])
     conn.executemany("DELETE FROM roots WHERE id=?", [(r,) for r in root_ids])
@@ -108,6 +112,26 @@ def acquire(conn: sqlite3.Connection, item_ids: list[int]) -> None:
     A later scan that finds the title on disk links it to the files."""
     conn.executemany(f"UPDATE items SET source='manual' WHERE id=? AND source='{db.WANTED}'",
                      [(i,) for i in item_ids])
+
+
+def _keep_completion_covers(conn: sqlite3.Connection, item_ids: list[int]) -> None:
+    """Completed entries show their library item's cover; before the item (and its cover
+    file) goes, give them a copy of their own so past years keep their pictures."""
+    import shutil
+
+    from .completions import _cover_name
+
+    posters = paths.posters_dir()
+    for item_id in item_ids:
+        row = conn.execute("SELECT poster FROM items WHERE id=?", (item_id,)).fetchone()
+        src = posters / row["poster"] if row and row["poster"] else None
+        if not src or not src.exists():
+            continue
+        for c in conn.execute("SELECT id FROM completions WHERE item_id=? AND poster IS NULL",
+                              (item_id,)).fetchall():
+            name = _cover_name(c["id"], src.suffix)
+            shutil.copyfile(src, posters / name)
+            conn.execute("UPDATE completions SET poster=? WHERE id=?", (name, c["id"]))
 
 
 def _delete_covers(conn: sqlite3.Connection, query: str, params: list[tuple]) -> None:
@@ -260,3 +284,79 @@ def started(conn: sqlite3.Connection, item_id: int) -> None:
                  "AND completed=0 AND COALESCE(plan_state, '') NOT IN (?, ?)",
                  (PLAN_PLAYING, datetime.now().isoformat(timespec="seconds"), item_id,
                   PLAN_PLAYING, PLAN_DROPPED))
+
+
+# --------------------------------------------------------------------------- what's left / what next
+
+def in_library(item: db.Item) -> bool:
+    """Yours: on disk or marked "got it" (not the wish list, not a Steam account game)."""
+    return item.source not in (db.WANTED, db.STEAM)
+
+
+def in_backlog(item: db.Item) -> bool:
+    """Yours, not finished, not gone missing, not given up on."""
+    return (in_library(item) and not item.completed and not item.missing
+            and item.plan_state != PLAN_DROPPED)
+
+
+def remaining_hours(item: db.Item) -> float:
+    """Roughly how long is left: HLTB minus time played, episodes not played yet, runtime."""
+    if item.category == "game":
+        hltb = item.hltb_hours or 0
+        return max(hltb - (item.playtime_min or 0) / 60, 0) if hltb else 0
+    total = item.total_hours or 0
+    if item.kind != "movie" and item.video_count and item.last_episode:
+        left = max(item.video_count - item.last_episode, 0)
+        return total * left / item.video_count
+    return total
+
+
+PICK_FROM = {"both": "Up next and Backlog", "next": "Up next", "backlog": "Backlog"}
+PICK_TIME = {"any": ("Any length", None, None), "2": ("Under 2 h", 0, 2), "10": ("Under 10 h", 0, 10),
+             "30": ("Under 30 h", 0, 30), "long": ("30 h or more", 30, None)}
+
+
+def pick_candidates(items: list[db.Item], source: str = "both", sections: set[str] | None = None,
+                    time: str = "any", online: set[str] | None = None) -> list[db.Item]:
+    """What "What should I play?" chooses from. ``online``: volume ids of connected drives
+    (None = don't care)."""
+    _, low, high = PICK_TIME.get(time, PICK_TIME["any"])
+    out = []
+    for i in items:
+        queued = i.plan_state == PLAN_NEXT
+        if source == "next" and not queued:
+            continue
+        if source == "backlog" and not in_backlog(i):
+            continue
+        if source == "both" and not (queued or in_backlog(i)):
+            continue
+        if sections and i.category not in sections:
+            continue
+        hours = remaining_hours(i)
+        if (low is not None or high is not None) and not hours:
+            continue  # unknown length can't satisfy a length filter
+        if (low is not None and hours < low) or (high is not None and hours >= high):
+            continue
+        if online is not None and in_library(i) and i.volume_uid not in online:
+            continue
+        out.append(i)
+    return out
+
+
+def pick(candidates: list[db.Item], favour_scores: bool = False, rng=None) -> db.Item | None:
+    """One at random; well-scored ones and the front of Up next come up more often."""
+    import random
+
+    if not candidates:
+        return None
+    rng = rng or random.Random()
+
+    def weight(i: db.Item) -> float:
+        w = 1.0
+        if favour_scores:
+            w *= ((i.avg_score or 60) / 100) ** 3
+        if i.plan_state == PLAN_NEXT and i.plan_position is not None:
+            w *= 1 + 1 / (1 + i.plan_position)
+        return w
+
+    return rng.choices(candidates, weights=[weight(i) for i in candidates], k=1)[0]

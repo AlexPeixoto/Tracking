@@ -23,7 +23,7 @@ QUERY = """
 query ($search: String) {
   Page(perPage: 10) {
     media(search: $search, type: ANIME) {
-      id siteUrl seasonYear format averageScore
+      id idMal episodes siteUrl seasonYear format averageScore
       title { romaji english native }
       synonyms
       coverImage { extraLarge large }
@@ -76,6 +76,40 @@ def _search(title: str, year: int | None, kind: str | None = None) -> Metadata |
         summary=desc,
         scores=scores,
     )
+
+
+def find(title: str, year: int | None = None, kind: str | None = None) -> dict | None:
+    """AniList's entry for a title (ids, episodes...), matched like a lookup."""
+    media = cached_json("anilist", f"ids-{title.lower()}", 90, _fetcher(title))
+    media = ((media.get("data") or {}).get("Page") or {}).get("media") or []
+    return best_match(
+        title, year, media,
+        names=lambda m: [*(m.get("title") or {}).values(), *(m.get("synonyms") or [])],
+        cand_year=lambda m: m.get("seasonYear"),
+        bonus=lambda m: media_format_bonus(m.get("format"), kind),
+    )
+
+
+def mal_id(title: str, year: int | None = None, kind: str | None = None) -> tuple[int, int | None] | None:
+    """(MyAnimeList id, episode count) for a title, through AniList (for MAL exports)."""
+    best = find(title, year, kind)
+    if not best or not best.get("idMal"):
+        return None
+    return best["idMal"], best.get("episodes")
+
+
+AIRING = "query ($id: Int) { Media(id: $id) { status episodes nextAiringEpisode { airingAt episode } } }"
+
+
+def airing(anilist_id: int) -> dict:
+    """{"status", "episodes", "nextAiringEpisode": {"airingAt", "episode"} | None} (cached 6 h)."""
+    def fetch():
+        _limit.wait()
+        r = session().post(API_URL, json={"query": AIRING, "variables": {"id": anilist_id}}, timeout=20)
+        r.raise_for_status()
+        return r.json()
+    data = cached_json("anilist", f"airing-{anilist_id}", 0.25, fetch)
+    return (data.get("data") or {}).get("Media") or {}
 
 
 def lookup(q: Query) -> Metadata | None:

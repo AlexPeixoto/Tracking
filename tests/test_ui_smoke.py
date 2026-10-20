@@ -116,3 +116,22 @@ def test_transfer_job_moves_and_reports(conn, tmp_path):
     assert summary.startswith("Moved 1 of 1")
     assert (dest / "Hades" / "Hades.exe").exists()
     assert not (tmp_path / "lib/Games/PC/Hades").exists()
+
+
+def test_trackers_dialog_and_export_job(conn, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    from tracking import exporters
+    from tracking.ui import workers
+    from tracking.ui.dialogs import TrackersDialog
+
+    dlg = TrackersDialog()
+    assert dlg.kinds() == set(exporters.KINDS)
+    for box in dlg.boxes.values():
+        box.setChecked(False)
+    assert not dlg.buttons.button(QDialogButtonBox.Ok).isEnabled()
+    dlg.boxes["all"].setChecked(True)
+    dlg.path.setText(str(tmp_path))
+    assert dlg.kinds() == {"all"} and dlg.folder == str(tmp_path)
+    summary = workers.TrackersExportJob(dlg.folder, dlg.kinds()).work(conn)
+    assert summary.startswith("Exported") and (tmp_path / "tracking-library.csv").exists()

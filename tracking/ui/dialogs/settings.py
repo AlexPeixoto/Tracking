@@ -72,6 +72,12 @@ class SettingsDialog(QDialog):
             self.workers.setValue(workers.metadata_workers(conn))
             self.workers.setSuffix(" at a time")
             gform.addRow("Metadata downloads", self.workers)
+            hint = QLabel("How many items to fetch ratings and covers for in parallel. Each site's "
+                          "own speed limit is still respected, so more doesn't hit any site harder; "
+                          "1 = one by one.")
+            hint.setObjectName("Muted")
+            hint.setWordWrap(True)
+            gform.addRow("", hint)
             player_row = QHBoxLayout()
             self.player = QLineEdit(db.get_setting(conn, launcher.PLAYER_KEY))
             self.player.setPlaceholderText("System default (or mpv / VLC / MPC-HC…)")
@@ -84,12 +90,31 @@ class SettingsDialog(QDialog):
             player_row.addWidget(pick_player)
             player_row.addWidget(self.player_args)
             gform.addRow("Video player", player_row)
-            hint = QLabel("How many items to fetch ratings and covers for in parallel. Each site's "
-                          "own speed limit is still respected, so more doesn't hit any site harder; "
-                          "1 = one by one.")
-            hint.setObjectName("Muted")
-            hint.setWordWrap(True)
-            gform.addRow("", hint)
+            backup_row = QHBoxLayout()
+            self.auto_backup = QComboBox()
+            for key, label in (("off", "Off"), ("daily", "Daily"), ("weekly", "Weekly")):
+                self.auto_backup.addItem(label, key)
+            self.auto_backup.setCurrentIndex(max(0, self.auto_backup.findData(
+                db.get_setting(conn, archive.AUTO, archive.AUTO_DEFAULT) or archive.AUTO_DEFAULT)))
+            self.backup_keep = QSpinBox()
+            self.backup_keep.setRange(1, 50)
+            self.backup_keep.setPrefix("keep ")
+            self.backup_keep.setValue(int(db.get_setting(conn, archive.AUTO_KEEP, "5") or 5))
+            self.backup_images = QCheckBox("with covers")
+            self.backup_images.setToolTip("Bigger, but nothing to fetch again after a restore")
+            self.backup_images.setChecked(db.get_setting(conn, archive.AUTO_IMAGES) == "1")
+            backup_now = QPushButton("Back up now")
+            backup_now.clicked.connect(self._backup_now)
+            open_backups = QPushButton("Open folder")
+            open_backups.clicked.connect(lambda: open_in_explorer(archive.backups_dir()))
+            for w in (self.auto_backup, self.backup_keep, self.backup_images, backup_now, open_backups):
+                backup_row.addWidget(w)
+            backup_row.addStretch(1)
+            gform.addRow("Automatic backups", backup_row)
+            last = db.get_setting(conn, archive.AUTO_LAST)
+            self.backup_note = QLabel(f"Last: {last.replace('T', ' ')[:16]}" if last else "None yet")
+            self.backup_note.setObjectName("Muted")
+            gform.addRow("", self.backup_note)
             where = QLabel(f"Log file: {log.log_file()}")
             where.setObjectName("Muted")
             where.setWordWrap(True)
@@ -168,6 +193,9 @@ class SettingsDialog(QDialog):
             db.set_setting(conn, "metadata_workers", str(self.workers.value()))
             db.set_setting(conn, "offline_style", self.offline_style.currentData())
             db.set_setting(conn, launcher.PLAYER_KEY, self.player.text().strip())
+            db.set_setting(conn, archive.AUTO, self.auto_backup.currentData())
+            db.set_setting(conn, archive.AUTO_KEEP, str(self.backup_keep.value()))
+            db.set_setting(conn, archive.AUTO_IMAGES, "1" if self.backup_images.isChecked() else "0")
             db.set_setting(conn, launcher.PLAYER_ARGS_KEY, self.player_args.text().strip())
             for plat, (path, args, unzip) in self.emulators.items():
                 db.set_setting(conn, launcher.emulator_key(plat), path.text().strip())
@@ -220,6 +248,14 @@ class SettingsDialog(QDialog):
         note.setObjectName("Muted")
         outer.addWidget(note)
         return page
+
+    def _backup_now(self) -> None:
+        try:
+            path = archive.auto_backup(force=True)
+        except Exception as e:
+            QMessageBox.warning(self, "Backup", f"Backup failed: {e}")
+            return
+        self.backup_note.setText(f"Saved {path.name}")
 
     def _pick_emulator(self, edit: QLineEdit, platform: str) -> None:
         path, _ = QFileDialog.getOpenFileName(self, f"Emulator for {platform}", edit.text(),

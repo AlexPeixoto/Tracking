@@ -323,6 +323,7 @@ class Item:
     last_episode_season: int | None = None
     last_watched: str | None = None
     plan_state: str | None = None        # Planning board column (None = not on the board)
+    external_id: str | None = None       # the matched service's id (IMDb tt…, TVmaze, Steam…)
     plan_position: int | None = None
 
     @property
@@ -358,7 +359,7 @@ SELECT id, volume_uid, rel_path, is_dir,
        install_state, COALESCE(user_launch, launch_path) AS launch_path, launch_args,
        last_launched, launch_count, last_episode, last_episode_season, last_watched,
        plan_state, plan_position,
-       rating, rating_max, rating_source, external_url, poster, summary, missing,
+       rating, rating_max, rating_source, external_id, external_url, poster, summary, missing,
        (SELECT COUNT(*) FROM media_files m WHERE m.item_id = items.id) AS video_count
 FROM items
 """
@@ -396,6 +397,7 @@ def row_to_item(row: sqlite3.Row) -> Item:
         last_launched=row["last_launched"],
         launch_count=row["launch_count"] or 0,
         last_episode=row["last_episode"],
+        external_id=row["external_id"],
         last_episode_season=row["last_episode_season"],
         last_watched=row["last_watched"],
         plan_state=row["plan_state"],

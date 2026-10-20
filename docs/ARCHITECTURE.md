@@ -18,6 +18,8 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `archive.py` | Export / import of the library as a zip (replace or merge) |
 | `launcher.py` | Play: the command for an item (PC .exe, emulator + argument template, steam://), unzipping images to a cache, recording launches |
 | `transfer.py` | Copy / move an item's files to another folder or drive (verified before deleting), re-link or link the copy (`copy_of`), and keep `item_history` |
+| `exporters.py` | Your library in other trackers' formats: MyAnimeList XML (MAL ids via AniList), Letterboxd diary / watchlist CSV, one CSV of everything |
+| `upcoming.py` | "Coming up" for an item page: TVmaze next episode, AniList airing, Steam release date and price / sale (keyless, cached a few hours) |
 | `completions.py` | The Completed log: one row per time you finished something (marking an item completed adds today; year CSVs `name, DD/MM/YYYY` and manual entries add rows outside the library, with their own cover). Editing, ordering, CSV import/export |
 | `volumes.py` | Drive identity: volume GUID + serial, UNC shares, Linux UUIDs; resolves where a drive is mounted now |
 | **Tables** | |
@@ -47,6 +49,8 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `ui/grid.py` | Poster cards (score chips, average, badges) |
 | `ui/item_page.py` | Item page: completion, scores, time, episodes, summary, edits |
 | `ui/dialogs/match.py` | Find match: search every service (`providers.search_all`) and use a result as the item's search title (`library.use_match`) |
+| `ui/dialogs/pick.py` | What should I play? (`library.pick_candidates` / `library.pick`) |
+| `ui/dialogs/trackers.py` | Export for other trackers (formats + folder; runs as a job) |
 | `ui/dialogs/health.py` | Library health: checks from `library.health()` (no cover / score / platform, duplicates, missing), each with Show / Fetch again |
 | `ui/planning_page.py` | Planning board: Up next / Playing / On hold (items.plan_state, `library.set_plan`) and Done this year (the Completed log); drag & drop, section chips |
 | `ui/completed_page.py` | Completed section: a year's covers (drag to reorder), add / edit / remove, CSV import / export |

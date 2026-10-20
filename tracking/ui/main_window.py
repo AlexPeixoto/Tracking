@@ -37,10 +37,19 @@ from ..scan import install
 from ..sources import steam
 from . import dialogs
 from .completed_page import CompletedPage
-from .grid import OFFLINE_TEXT, CardDelegate, ItemModel, ItemRole
+from .grid import OFFLINE_TEXT, CardDelegate, ItemModel, ItemRole, posters
 from .item_page import ItemPage
 from .planning_page import PlanningPage
-from .workers import CompletionCoversJob, EnrichJob, Job, LaunchJob, ScanJob, TransferJob
+from .workers import (
+    BackupJob,
+    CompletionCoversJob,
+    EnrichJob,
+    Job,
+    LaunchJob,
+    ScanJob,
+    TrackersExportJob,
+    TransferJob,
+)
 
 SECTIONS = [(c.key, c.label) for c in categories.CATEGORIES]
 SORTS = [("title", "Title"), ("avg", "Score: average"), ("best", "Score: highest"),
@@ -62,10 +71,7 @@ def view_of(item: db.Item) -> str | None:
     return {db.WANTED: WANT, db.STEAM: STEAM}.get(item.source)
 
 
-def in_backlog(item: db.Item) -> bool:
-    """Yours (on disk or marked as got), not finished, not gone missing."""
-    return (view_of(item) is None and not item.completed and not item.missing
-            and item.plan_state != library.PLAN_DROPPED)
+in_backlog = library.in_backlog
 
 
 def watching(item: db.Item) -> bool:
@@ -113,6 +119,11 @@ class MainWindow(QMainWindow):
         self.drive_timer = QTimer(self)
         self.drive_timer.timeout.connect(self._poll_drives)
         self.drive_timer.start(25_000)
+        # Automatic backups (Settings › General): checked a minute after start, then hourly.
+        self.backup_timer = QTimer(self)
+        self.backup_timer.timeout.connect(self.backup_if_due)
+        self.backup_timer.start(3_600_000)
+        QTimer.singleShot(60_000, self.backup_if_due)
         self.refresh_volumes()
         self.reload()
 
@@ -151,8 +162,11 @@ class MainWindow(QMainWindow):
         menu = QMenu(export)
         menu.addAction("Items missing a cover or scores…", lambda: self.export_list(missing_only=True))
         menu.addAction("Items shown now…", lambda: self.export_list(missing_only=False))
+        menu.addSeparator()
+        menu.addAction("For other trackers (MyAnimeList, Letterboxd)…", self.export_trackers)
         export.setMenu(menu)
         tb.addWidget(export)
+        action("What should I play?", self.open_picker, "Ctrl+R")
         action("Library health…", self.open_health, "Ctrl+H")
         action("Settings…", self.open_settings, "Ctrl+,")
         action("Log", self.open_log, "Ctrl+Shift+L")
@@ -490,6 +504,14 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ data
 
+    def backup_if_due(self, force: bool = False):
+        job = BackupJob(force)
+        job.signals.finished.connect(lambda s: s and self.statusBar().showMessage(s, 8000))
+        self._background = [j for j in getattr(self, "_background", []) if not j.done] + [job]
+        job.done = False
+        job.signals.finished.connect(lambda *_: setattr(job, "done", True))
+        QThreadPool.globalInstance().start(job)
+
     def _poll_drives(self):
         sig = tuple(sorted(repr(v) for v in volumes.list_volumes()))
         if self._drive_sig is None:
@@ -772,6 +794,14 @@ class MainWindow(QMainWindow):
         self.add_btn.hide()
         self.count.setText(f"{len(items)} items · click a section in the sidebar to go back")
         self.model.set_items(items)
+
+    def open_picker(self):
+        online = {u for u, m in self.mounts.items() if m}
+        dlg = dialogs.PickDialog(self.all_items, online, self)
+        dlg.open_item.connect(self.show_item)
+        dlg.play.connect(self.play)
+        dlg.plan.connect(self.set_plan)
+        dlg.exec()
 
     def open_health(self):
         with db.session() as conn:
@@ -1069,6 +1099,8 @@ class MainWindow(QMainWindow):
         self.bulk_label.setText(f"{n} selected")
 
     def after_import(self, result):
+        # Cover files are named by item id: after an import, "12.jpg" may be another item.
+        posters.invalidate()
         self.refresh_volumes()
         self.reload()
         if result.need_metadata and QMessageBox.question(
@@ -1076,6 +1108,11 @@ class MainWindow(QMainWindow):
                 f"{result.need_metadata} imported items have no cover yet. Fetch covers and "
                 "scores for them now?") == QMessageBox.Yes:
             self.start_job(EnrichJob(only_pending=True))
+
+    def export_trackers(self) -> None:
+        dlg = dialogs.TrackersDialog(self)
+        if dlg.exec():
+            self.start_job(TrackersExportJob(dlg.folder, dlg.kinds()))
 
     def export_list(self, missing_only: bool) -> None:
         if missing_only:

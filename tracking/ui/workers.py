@@ -313,6 +313,40 @@ class TransferJob(Job):
         return f"{verb} {done} of {len(self.item_ids)} items to {self.dest_dir}"
 
 
+class TrackersExportJob(Job):
+    """Export for MyAnimeList / Letterboxd / CSV (MAL ids are looked up online)."""
+
+    def __init__(self, folder: str, kinds: set[str]):
+        super().__init__()
+        self.folder, self.kinds = folder, kinds
+
+    def work(self, conn) -> str:
+        from pathlib import Path
+
+        from .. import exporters
+
+        res = exporters.export(conn, Path(self.folder), self.kinds,
+                               progress=self.signals.progress.emit, cancelled=self.cancelled)
+        if res.skipped:
+            self.signals.warning.emit(
+                "Not on MyAnimeList (left out of the export): " + ", ".join(res.skipped))
+        return f"Exported to {self.folder}: {res.summary()}"
+
+
+class BackupJob(Job):
+    """Automatic backup, when it's due (or now, with ``force``)."""
+
+    def __init__(self, force: bool = False):
+        super().__init__()
+        self.force = force
+
+    def work(self, conn) -> str:
+        from .. import archive
+
+        path = archive.auto_backup(force=self.force)
+        return f"Backed up to {path.name}" if path else ""
+
+
 class LaunchJob(Job):
     """Play: unpack a zipped image if the emulator needs it, then start the game. Runs
     outside the job queue, so a long scan never delays it."""

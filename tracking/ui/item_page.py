@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -57,6 +57,24 @@ def fmt_score(value: float, max_value: float) -> str:
     if max_value == 100:
         return f"{value:.0f}%" if value <= 100 else f"{value:.0f}"
     return f"{value:.1f}/{max_value:.0f}" if max_value != 10 else f"{value:.1f}"
+
+
+class _UpcomingSignals(QObject):
+    done = Signal(int, list)          # item id, [Upcoming]
+
+
+class _UpcomingJob(QRunnable):
+    """"Coming up" for one item, off the UI thread (it may go online)."""
+
+    def __init__(self, item: db.Item):
+        super().__init__()
+        self.item = item
+        self.signals = _UpcomingSignals()
+
+    def run(self) -> None:
+        from .. import upcoming
+
+        self.signals.done.emit(self.item.id, upcoming.for_item(self.item))
 
 
 def _section(title: str) -> QLabel:
@@ -188,6 +206,15 @@ class ItemPage(QScrollArea):
         self.play_info = QLabel()
         self.play_info.setObjectName("Muted")
         right.addWidget(self.play_info)
+        # Coming up: next episode, airing, release date, Steam sale (filled in the background).
+        self.upcoming_title = _section("Coming up")
+        self.upcoming = QLabel()
+        self.upcoming.setTextFormat(Qt.RichText)
+        self.upcoming.setOpenExternalLinks(True)
+        self.upcoming.setWordWrap(True)
+        right.addWidget(self.upcoming_title)
+        right.addWidget(self.upcoming)
+        self._upcoming_jobs: list[_UpcomingJob] = []
 
         right.addWidget(_section("Scores"))
         self.scores = QGridLayout()  # wraps after SCORES_PER_ROW chips
@@ -299,6 +326,7 @@ class ItemPage(QScrollArea):
 
         self._set_done(item.completed, item.completed_at)
         self._show_launch(item, mount)
+        self._load_upcoming(item)
 
         while self.scores.count():
             w = self.scores.takeAt(0).widget()
@@ -525,6 +553,27 @@ class ItemPage(QScrollArea):
         if not mount:
             bits.append("drive not connected")
         self.play_info.setText("  ·  ".join(bits) or "Double-click an episode below to play it")
+
+    def _load_upcoming(self, item: db.Item) -> None:
+        self.upcoming_title.hide()
+        self.upcoming.hide()
+        if item.category not in ("tv", "anime", "game") or item.kind == "movie":
+            return
+        job = _UpcomingJob(item)
+        job.signals.done.connect(self._show_upcoming)
+        self._upcoming_jobs = [*self._upcoming_jobs[-4:], job]  # keep alive until it reports
+        QThreadPool.globalInstance().start(job)
+
+    def _show_upcoming(self, item_id: int, found: list) -> None:
+        if not self.item or self.item.id != item_id or not found:
+            return  # another item is shown now, or nothing to say
+        lines = []
+        for u in found:
+            text = u.text if not u.url else f"<a style='color:#5b8cff' href='{u.url}'>{u.text}</a>"
+            lines.append(f"<b>{text}</b>" if u.highlight else text)
+        self.upcoming.setText("<br>".join(lines))
+        self.upcoming_title.show()
+        self.upcoming.show()
 
     def _launch_options(self) -> None:
         dlg = LaunchOptionsDialog(self.item, getattr(self, "mount", None), self)

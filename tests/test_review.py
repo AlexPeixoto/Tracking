@@ -87,3 +87,62 @@ def test_refetch_keeps_cover_and_scores_when_a_service_fails(conn, monkeypatch):
     item = db.get_item(conn, iid)
     assert item.poster == "7.jpg"                                   # no new cover: old one stays
     assert {s.source: s.value for s in item.scores} == {"Metacritic": 94, "HLTB users": 88}
+
+
+def test_removing_an_item_keeps_its_completed_cover(conn):
+    from tracking import completions, library, paths
+
+    iid = conn.execute("INSERT INTO items(volume_uid, rel_path, is_dir, category, title, poster) "
+                       "VALUES('v', 'g/Okami', 1, 'game', 'Okami', '5.jpg')").lastrowid
+    (paths.posters_dir() / "5.jpg").write_bytes(b"cover")
+    completions.add(conn, "Okami", "2023-05-01", item_id=iid)
+    library.remove_items(conn, [iid])
+    [c] = completions.list_year(conn, 2023)
+    assert c.item_id is None and c.poster_path()                      # its own copy now
+    assert Path(c.poster_path()).read_bytes() == b"cover"
+    assert not (paths.posters_dir() / "5.jpg").exists()
+
+
+def test_replace_import_saves_a_backup_first(tmp_path, conn):
+    import sqlite3
+    import zipfile
+
+    from tracking import archive
+
+    conn.execute("INSERT INTO items(volume_uid, rel_path, is_dir, category, title) "
+                 "VALUES('v', 'other', 1, 'game', 'Other')")
+    conn.commit()
+    other = tmp_path / "other.zip"
+    archive.export_zip(other, images=False)                          # a library with "Other"
+    conn.execute("UPDATE items SET title='Mine', rel_path='mine'")
+    conn.commit()                                                    # yours: "Mine"
+
+    result = archive.import_zip(other, "replace")
+    assert [i.title for i in db.list_items(conn)] == ["Other"]
+    assert "previous library was saved" in str(result)
+    with zipfile.ZipFile(result.backup) as z:
+        z.extract(archive.DB_NAME, tmp_path / "b")
+    saved = sqlite3.connect(tmp_path / "b" / archive.DB_NAME)
+    assert [r[0] for r in saved.execute("SELECT title FROM items")] == ["Mine"]
+    saved.close()
+
+
+def test_automatic_backups_follow_the_schedule(conn, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from tracking import archive
+
+    assert archive.auto_backup_due(conn)                               # never backed up yet
+    first = archive.auto_backup()
+    assert first.exists() and first.name.startswith("auto-")
+    assert archive.auto_backup() is None                               # weekly: not again today
+    later = datetime.now() + timedelta(days=7)
+    assert archive.auto_backup_due(conn, later)
+    db.set_setting(conn, archive.AUTO, "off")
+    conn.commit()
+    assert not archive.auto_backup_due(conn, later)
+    db.set_setting(conn, archive.AUTO_KEEP, "2")
+    conn.commit()
+    for _ in range(3):
+        archive.auto_backup(force=True)
+    assert len(list(archive.backups_dir().glob("auto-*.zip"))) <= 2

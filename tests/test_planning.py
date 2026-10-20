@@ -96,3 +96,45 @@ def test_board_columns_filters_and_drops(conn, monkeypatch):
     page.drop([g], "done")                                            # dropped into Done
     assert page.lists["done"].count() == 1 and page.lists["playing"].count() == 0
     assert "~" in page.titles["next"].text()                           # column hours
+
+
+def test_what_should_i_play(conn, monkeypatch):
+    import random
+
+    long_game = _item(conn, "Long", hltb_hours=80.0, volume_uid="v")
+    short = _item(conn, "Short", hltb_hours=5.0, volume_uid="v")
+    queued = _item(conn, "Queued", category="anime", duration_sec=3600, volume_uid="off")
+    done = _item(conn, "Done", hltb_hours=3.0, completed=1)
+    library.set_plan(conn, [queued], library.PLAN_NEXT)
+    items = db.list_items(conn)
+    ids = lambda xs: sorted(i.title for i in xs)
+    assert ids(library.pick_candidates(items)) == ["Long", "Queued", "Short"]
+    assert ids(library.pick_candidates(items, "next")) == ["Queued"]
+    assert ids(library.pick_candidates(items, time="10")) == ["Queued", "Short"]
+    assert ids(library.pick_candidates(items, time="long")) == ["Long"]
+    assert ids(library.pick_candidates(items, sections={"game"})) == ["Long", "Short"]
+    assert ids(library.pick_candidates(items, online={"v"})) == ["Long", "Short"]
+    assert done not in {i.id for i in library.pick_candidates(items)}
+    rng = random.Random(1)
+    picks = {library.pick(library.pick_candidates(items), rng=rng).title for _ in range(50)}
+    assert picks == {"Long", "Queued", "Short"}
+    assert library.pick([]) is None
+    assert {long_game, short}
+
+
+def test_pick_dialog_suggests_and_starts(conn, monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from tracking.ui.dialogs import PickDialog
+
+    a = _item(conn, "Okami", hltb_hours=30.0)
+    conn.commit()
+    dlg = PickDialog(db.list_items(conn), {"v"})
+    assert dlg.current.id == a and "Okami" in dlg.title.text()
+    planned = []
+    dlg.plan.connect(lambda ids, state: planned.append((ids, state)))
+    dlg._plan(library.PLAN_PLAYING)
+    assert planned == [([a], "playing")]
+    dlg2 = PickDialog([], set())
+    assert dlg2.current is None and "Nothing matches" in dlg2.title.text()

@@ -44,6 +44,14 @@ remembers what you've finished, even when the drive is unplugged.
   emulator you pick per platform (zipped discs are unpacked for you), Steam games in Steam.
   Filter games by *Installed*, *Installer* or *ROM / disc*, and sort by *Recently played*.
 - 🎮 **Steam accounts**: your owned games with **time played**, in their own section.
+- 🎲 **What should I play?**: one suggestion at a time from Up next and your Backlog, by
+  section, length ("under 10 h") and what's on connected drives.
+- 📅 **Coming up** on each page: a show's next episode, when an anime's next episode airs, a
+  game's release date and Steam sales.
+- 📤 **Export to other trackers**: MyAnimeList (anime XML), Letterboxd (diary + watchlist CSV),
+  or everything as one CSV.
+- 💾 **Automatic backups**, weekly by default, plus one before any import that replaces your
+  library.
 - 🔎 **Find match**: if something found the wrong thing (or nothing), search every service
   with any name and pick the right result.
 - 📺 **Watch from the library**: *Play next* opens the next episode in your player, double-click
@@ -87,6 +95,14 @@ with progress and hours left on every card.</sub></p>
     <td><img src="docs/images/export-dialog.png" alt="Export year as image"><br>
       <sub><b>Export year as image</b>: columns, cover size and shape, gaps, background,
       a corner stamp, presets, and leaving out entries without a cover.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/pick.png" alt="What should I play?"><br>
+      <sub><b>What should I play?</b> One pick at a time, by section, length and what's
+      connected.</sub></td>
+    <td><img src="docs/images/item-upcoming.png" alt="Coming up"><br>
+      <sub><b>Coming up</b> on an item's page: here a wish-list game's Steam price (sales
+      in bold); next episodes and air dates for shows and anime.</sub></td>
   </tr>
   <tr>
     <td><img src="docs/images/backlog.png" alt="Backlog"><br>
@@ -136,6 +152,8 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 | **Ctrl+N** | Add to *Want to acquire*, or a *Completed* entry when you're there |
 | **Right-click** | Move to another section / platform, complete, refetch, remove |
 | **Export list…** | A spreadsheet of the items missing a cover or scores, or of what's shown |
+| **What should I play?** (Ctrl+R) | A random pick from Up next / Backlog, with filters |
+| **Export list… › For other trackers** | MyAnimeList XML, Letterboxd CSVs, or one CSV of everything |
 | **Library health…** (Ctrl+H) | What needs a look, with *Show* and *Fetch again* |
 | **Right-click › Plan** | Put items on the Planning board (Up next, Playing, On hold) or drop them |
 | **▶ Play** | On a game's page or right-click (Ctrl+Enter in the grid). Emulators: Settings › Emulators |
@@ -281,6 +299,8 @@ cache\            cached service answers (keeps within rate limits)
 logs\             tracking.log (level in Settings › General)
 ```
 
+- **Backups**: automatic (Settings › General: daily / weekly / off, how many to keep, with
+  or without covers) in `backups\`, and always one right before an import replaces your library.
 - **Portable mode**: create a `data` folder next to `Tracking.exe` and the library lives there.
 - **Export / import** (Settings › General): one `.zip`, database only or with covers; API keys
   are left out unless you ask. Import replaces your library or merges into it (your edits win).
