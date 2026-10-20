@@ -142,7 +142,7 @@ python -m venv .venv
 On first start the **Locations** window opens. Add a whole drive or a folder, pick what it
 holds (or leave *Auto-detect*), and it's scanned right away. Then:
 
-| | |
+| Action | What it does |
 |---|---|
 | **F5** · Rescan | Pick locations; optionally mark items no longer found as completed. Unplugged drives are re-processed from their snapshot |
 | **Update metadata** | Fetch what's missing (items without a cover are retried) |
@@ -163,7 +163,7 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 <details>
 <summary>Keyboard</summary>
 
-| Key | |
+| Key | Does |
 |---|---|
 | Arrows · Enter | Move around the grid · open an item |
 | Space | Mark the selected items completed (again: not completed) |
@@ -222,7 +222,7 @@ its exact size in pixels:
 
 Works out of the box. Free keys (Settings, one tab per section) add more scores.
 
-| | No key needed | With a free key |
+| Section | No key needed | With a free key |
 |---|---|---|
 | **Anime** | AniList, Kitsu, MyAnimeList (Jikan): scores, covers, episodes | AniDB, Trakt |
 | **Movies** | IMDb posters and links; Rotten Tomatoes + Metacritic via Wikidata | OMDb (IMDb score, and the rest), TMDB, Trakt |
