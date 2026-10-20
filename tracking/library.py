@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from dataclasses import dataclass
 
 from . import categories, db, paths
 
@@ -132,3 +133,59 @@ def export_list(conn: sqlite3.Connection, items: list[db.Item], path: str) -> in
                 hours or "", i.detected_how or "", i.rel_path, " | ".join(files),
             ])
     return len(items)
+
+
+# --------------------------------------------------------------------------- duplicates
+
+def find_duplicates(items: list[db.Item]) -> list[list[db.Item]]:
+    """Library items that look like the same thing: same section and title (articles
+    and punctuation ignored), e.g. a PS2 and a PC copy, or one movie on two drives.
+    Biggest groups first; within a group, by platform and path."""
+    from . import titles
+
+    groups: dict[tuple, list[db.Item]] = {}
+    for i in items:
+        if i.source in (db.WANTED, db.STEAM):
+            continue
+        key = (i.category, titles.normalize(titles.front_article(i.title)), i.season)
+        if key[1]:
+            groups.setdefault(key, []).append(i)
+    found = [sorted(g, key=lambda i: (i.platform or "", i.rel_path)) for g in groups.values()
+             if len(g) > 1]
+    return sorted(found, key=lambda g: (-len(g), g[0].title.lower()))
+
+
+# --------------------------------------------------------------------------- health
+
+@dataclass
+class HealthCheck:
+    key: str
+    label: str
+    hint: str
+    ids: list[int]
+    fetch: bool = False          # "Fetch again" makes sense for these
+
+
+def health(items: list[db.Item]) -> list[HealthCheck]:
+    """What in the library could use a look, for Library health."""
+    lib = [i for i in items if i.source not in (db.WANTED, db.STEAM)]
+    present = [i for i in lib if not i.missing]
+    dupes = [i.id for g in find_duplicates(lib) for i in g]
+    return [
+        HealthCheck("no_cover", "No cover", "Nothing found yet. Fetch again retries them all;\n"
+                    "fix a misread title on the item page first.",
+                    [i.id for i in present if not i.poster], fetch=True),
+        HealthCheck("no_score", "No score from any site",
+                    "Movies need an OMDb or TMDB key, retro games an IGDB key.",
+                    [i.id for i in present if not i.scores], fetch=True),
+        HealthCheck("no_platform", "Games without a platform",
+                    "Right-click › Move to › Games › a platform.",
+                    [i.id for i in lib if i.category == "game" and not i.platform]),
+        HealthCheck("unknown", "In “Unknown”", "Move them to the right section.",
+                    [i.id for i in lib if i.category == "unknown"]),
+        HealthCheck("duplicates", "Possible duplicates",
+                    "Same title twice: another platform, or a copy on another drive.", dupes),
+        HealthCheck("missing", "Not found on the last scan",
+                    "Files moved or deleted. A rescan re-links moved ones.",
+                    [i.id for i in lib if i.missing]),
+    ]

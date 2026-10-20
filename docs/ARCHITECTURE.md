@@ -42,6 +42,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `ui/main_window.py` | Sidebar (library sections, Steam, Want to acquire), grid, job queue, toolbar |
 | `ui/grid.py` | Poster cards (score chips, average, badges) |
 | `ui/item_page.py` | Item page: completion, scores, time, episodes, summary, edits |
+| `ui/dialogs/health.py` | Library health: checks from `library.health()` (no cover / score / platform, duplicates, missing), each with Show / Fetch again |
 | `ui/completed_page.py` | Completed section: a year's covers (drag to reorder), add / edit / remove, CSV import / export |
 | `ui/year_image.py` | "Export year as image": the year's covers as one grid picture (columns, cover size / shape, gap, margin, background, heading, labels), drawn with Qt |
 | `ui/dialogs/` | `locations.py` (add / manage / rescan, add Steam account), `settings.py` (keys, export/import), `log_viewer.py` |

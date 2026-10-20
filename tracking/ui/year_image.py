@@ -22,6 +22,9 @@ from PySide6.QtWidgets import (
 from .. import completions, db
 
 SETTING = "year_image"
+PRESETS = "year_image_presets"
+STAMPS = {"none": "No stamp", "top-left": "Top left", "top-right": "Top right",
+          "bottom-left": "Bottom left", "bottom-right": "Bottom right"}
 SHAPES = {"3:4 (game box)": 4 / 3, "2:3 (movie poster)": 3 / 2, "IGDB cover (264×374)": 374 / 264,
           "Square": 1.0}
 LABELS = {"none": "No labels", "title": "Title", "date": "Date", "both": "Title and date"}
@@ -41,6 +44,8 @@ class Options:
     heading_text: str = "Completed in {year}"
     labels: str = "none"
     crop: bool = True                # fill the cell (crop) or fit the whole cover
+    stamp: str = "none"              # a small "2024 · 14 completed" badge in a corner
+    stamp_text: str = "{year} · {count} completed"
 
     @property
     def cover_height(self) -> int:
@@ -56,6 +61,26 @@ class Options:
 
     def save(self, conn) -> None:
         db.set_setting(conn, SETTING, json.dumps(asdict(self)))
+
+
+def load_presets(conn) -> dict[str, Options]:
+    """Your named option sets ("Twitter grid", "Big poster"...)."""
+    try:
+        raw = json.loads(db.get_setting(conn, PRESETS) or "{}")
+    except ValueError:
+        return {}
+    fields = Options.__dataclass_fields__
+    return {name: Options(**{k: v for k, v in d.items() if k in fields}) for name, d in raw.items()}
+
+
+def save_preset(conn, name: str, opts: Options | None) -> None:
+    """Store ``opts`` under ``name``; None deletes it."""
+    presets = {n: asdict(o) for n, o in load_presets(conn).items()}
+    if opts is None:
+        presets.pop(name, None)
+    else:
+        presets[name] = asdict(opts)
+    db.set_setting(conn, PRESETS, json.dumps(presets))
 
 
 def grid_columns(n: int, opts: Options) -> int:
@@ -136,8 +161,29 @@ def render(entries: list[completions.Completion], year: int, opts: Options) -> Q
             p.setPen(ink)
             p.drawText(QRectF(x, y + ch + 4, cw, label_h - 4), Qt.AlignHCenter | Qt.AlignTop,
                        "\n".join(p.fontMetrics().elidedText(t, Qt.ElideRight, cw) for t in lines))
+    if opts.stamp != "none":
+        _stamp(p, w, h, opts, opts.stamp_text.replace("{year}", str(year))
+               .replace("{count}", str(len(entries))))
     p.end()
     return img
+
+
+def _stamp(p: QPainter, w: int, h: int, opts: Options, text: str) -> None:
+    f = QFont()
+    f.setPixelSize(max(11, round(opts.cover_width * 0.075)))
+    f.setBold(True)
+    p.setFont(f)
+    fm = p.fontMetrics()
+    pad = max(4, f.pixelSize() // 2)
+    bw, bh = fm.horizontalAdvance(text) + 2 * pad, fm.height() + pad
+    inset = opts.margin + max(6, opts.cover_width // 30)
+    x = inset if "left" in opts.stamp else w - inset - bw
+    y = inset if "top" in opts.stamp else h - inset - bh
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(0, 0, 0, 170))
+    p.drawRoundedRect(QRectF(x, y, bw, bh), bh / 3, bh / 3)
+    p.setPen(QColor("#ffffff"))
+    p.drawText(QRect(x, y, bw, bh), Qt.AlignCenter, text)
 
 
 class ExportYearDialog(QDialog):
@@ -151,6 +197,17 @@ class ExportYearDialog(QDialog):
             self.opts = Options.load(conn)
 
         form = QFormLayout()
+        preset_row = QHBoxLayout()
+        self.preset = QComboBox()
+        self.preset.setToolTip("Saved option sets")
+        save_preset_btn = QPushButton("Save as…")
+        save_preset_btn.clicked.connect(self._save_preset)
+        self.del_preset = QPushButton("Delete")
+        self.del_preset.clicked.connect(self._delete_preset)
+        preset_row.addWidget(self.preset, 1)
+        preset_row.addWidget(save_preset_btn)
+        preset_row.addWidget(self.del_preset)
+        form.addRow("Preset", preset_row)
         self.columns = QSpinBox()
         self.columns.setRange(0, 30)
         self.columns.setSpecialValueText("Automatic")
@@ -182,6 +239,14 @@ class ExportYearDialog(QDialog):
         self.labels = QComboBox()
         for key, label in LABELS.items():
             self.labels.addItem(label, key)
+        stamp_row = QHBoxLayout()
+        self.stamp = QComboBox()
+        for key, label in STAMPS.items():
+            self.stamp.addItem(label, key)
+        self.stamp_text = QLineEdit()
+        self.stamp_text.setToolTip("{year} and {count} are filled in")
+        stamp_row.addWidget(self.stamp)
+        stamp_row.addWidget(self.stamp_text, 1)
         form.addRow("Columns", self.columns)
         form.addRow("Cover width", self.cover_width)
         form.addRow("Cover shape", self.shape)
@@ -191,6 +256,7 @@ class ExportYearDialog(QDialog):
         form.addRow("Background", bg_row)
         form.addRow("Title", head_row)
         form.addRow("Under each cover", self.labels)
+        form.addRow("Corner stamp", stamp_row)
 
         self.size = QLabel()
         self.size.setObjectName("Muted")
@@ -224,14 +290,17 @@ class ExportYearDialog(QDialog):
         lay.addLayout(left)
         lay.addWidget(self.preview, 1)
 
+        self._load_presets()
+        self.preset.currentIndexChanged.connect(self._pick_preset)
         self._fill()
         for w in (self.columns, self.cover_width, self.gap, self.margin):
             w.valueChanged.connect(self._changed)
-        for w in (self.shape, self.background, self.labels):
+        for w in (self.shape, self.background, self.labels, self.stamp):
             w.currentIndexChanged.connect(self._changed)
         for w in (self.crop, self.heading):
             w.toggled.connect(self._changed)
         self.heading_text.textChanged.connect(self._changed)
+        self.stamp_text.textChanged.connect(self._changed)
         self._changed()
 
     def _fill(self) -> None:
@@ -248,12 +317,57 @@ class ExportYearDialog(QDialog):
         self.heading.setChecked(o.heading)
         self.heading_text.setText(o.heading_text)
         self.labels.setCurrentIndex(max(0, self.labels.findData(o.labels)))
+        self.stamp.setCurrentIndex(max(0, self.stamp.findData(o.stamp)))
+        self.stamp_text.setText(o.stamp_text)
 
     def _read(self) -> Options:
         return Options(self.columns.value(), self.cover_width.value(), self.shape.currentText(),
                        self.gap.value(), self.margin.value(), self.background.currentData(),
                        self.heading.isChecked(), self.heading_text.text() or "Completed in {year}",
-                       self.labels.currentData(), self.crop.isChecked())
+                       self.labels.currentData(), self.crop.isChecked(), self.stamp.currentData(),
+                       self.stamp_text.text() or "{year} · {count} completed")
+
+    # ------------------------------------------------------------------ presets
+
+    def _load_presets(self, select: str | None = None) -> None:
+        with db.session() as conn:
+            self.presets = load_presets(conn)
+        self.preset.blockSignals(True)
+        self.preset.clear()
+        self.preset.addItem("Last used", None)
+        for name in sorted(self.presets, key=str.lower):
+            self.preset.addItem(name, name)
+        self.preset.setCurrentIndex(max(0, self.preset.findData(select)))
+        self.preset.blockSignals(False)
+        self.del_preset.setEnabled(select is not None)
+
+    def _pick_preset(self, _index=None) -> None:
+        name = self.preset.currentData()
+        self.del_preset.setEnabled(name is not None)
+        if name is None:
+            with db.session() as conn:
+                self.opts = Options.load(conn)
+        else:
+            self.opts = self.presets[name]
+        self._fill()
+        self._changed()
+
+    def _save_preset(self) -> None:
+        from PySide6.QtWidgets import QInputDialog
+
+        name, ok = QInputDialog.getText(self, "Save preset", "Name for these settings:",
+                                        text=self.preset.currentData() or "")
+        if ok and name.strip():
+            with db.session() as conn:
+                save_preset(conn, name.strip(), self._read())
+            self._load_presets(select=name.strip())
+
+    def _delete_preset(self) -> None:
+        name = self.preset.currentData()
+        if name and QMessageBox.question(self, "Delete preset", f"Delete “{name}”?") == QMessageBox.Yes:
+            with db.session() as conn:
+                save_preset(conn, name, None)
+            self._load_presets()
 
     def _pick_color(self) -> None:
         c = QColorDialog.getColor(parent=self)
@@ -266,6 +380,7 @@ class ExportYearDialog(QDialog):
     def _changed(self, *_) -> None:
         self.opts = self._read()
         self.heading_text.setEnabled(self.opts.heading)
+        self.stamp_text.setEnabled(self.opts.stamp != "none")
         w, h, cols, rows, *_ = layout(len(self.entries), self.opts)
         self.size.setText(f"{len(self.entries)} covers · {cols} × {rows} grid · "
                           f"<b>{w} × {h} px</b>")

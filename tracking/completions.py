@@ -395,3 +395,39 @@ class _Named:
     """search_titles() wants something with .title / .category."""
     title: str
     category: str
+
+
+# --------------------------------------------------------------------------- stats
+
+@dataclass
+class YearStats:
+    count: int = 0
+    by_category: dict[str, int] = field(default_factory=dict)
+    hours: float = 0.0                       # time spent, where known
+    timed: int = 0                           # entries the hours come from
+    by_month: list[int] = field(default_factory=lambda: [0] * 12)
+    undated: int = 0                         # entries with only the year
+
+
+def year_stats(conn: sqlite3.Connection, year: int | None) -> YearStats:
+    """Counts per section and month, and the time it took: Steam play time or
+    HowLongToBeat main story for games, the runtime for anime / movies / TV."""
+    where, args = ("WHERE substr(c.completed_on, 1, 4) = ?", (f"{year:04d}",)) if year else ("", ())
+    s = YearStats()
+    for r in conn.execute(
+            f"SELECT c.category, c.completed_on, i.playtime_min, i.hltb_hours, i.duration_sec "
+            f"FROM completions c LEFT JOIN items i ON i.id = c.item_id {where}", args):
+        s.count += 1
+        s.by_category[r["category"]] = s.by_category.get(r["category"], 0) + 1
+        if len(r["completed_on"]) >= 7:
+            s.by_month[int(r["completed_on"][5:7]) - 1] += 1
+        else:
+            s.undated += 1
+        if r["category"] == "game":
+            h = (r["playtime_min"] or 0) / 60 or r["hltb_hours"]
+        else:
+            h = (r["duration_sec"] or 0) / 3600
+        if h:
+            s.hours += h
+            s.timed += 1
+    return s

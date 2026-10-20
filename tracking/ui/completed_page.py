@@ -47,6 +47,60 @@ def _cover(c: completions.Completion) -> QPixmap:
     return scaled.copy(max(0, x), max(0, y), COVER.width(), COVER.height())
 
 
+MONTHS = "JFMAMJJASOND"
+
+
+class MonthChart(QWidget):
+    """Twelve small bars: how many things you finished each month."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.counts = [0] * 12
+        self.setFixedSize(12 * 18, 46)
+
+    def set_counts(self, counts: list[int]) -> None:
+        self.counts = counts
+        self.setToolTip("\n".join(f"{date(2000, m + 1, 1):%B}: {n}" for m, n in enumerate(counts)))
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        top = max(self.counts) or 1
+        f = QFont()
+        f.setPixelSize(9)
+        p.setFont(f)
+        for m, n in enumerate(self.counts):
+            x = m * 18 + 3
+            h = round(30 * n / top)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#4f7cff") if n else QColor("#2a2d36"))
+            p.drawRoundedRect(x, 32 - max(h, 2), 12, max(h, 2), 2, 2)
+            p.setPen(QColor("#8a8f9c"))
+            p.drawText(x, 34, 12, 12, Qt.AlignCenter, MONTHS[m])
+        p.end()
+
+
+def stats_text(s: completions.YearStats) -> str:
+    """"14 finished · 9 games, 3 anime, 2 movies · 312 h" """
+    if not s.count:
+        return ""
+    def low(s: str) -> str:  # "TV Shows" -> "TV shows", "Movie" -> "movie"
+        return " ".join(w if w.isupper() else w.lower() for w in s.split())
+
+    labels = {c.key: (low(c.singular), low(c.label)) for c in categories.CATEGORIES}
+    parts = []
+    for key, n in sorted(s.by_category.items(), key=lambda kv: -kv[1]):
+        one, many = labels.get(key, (key, key))
+        parts.append(f"{n} {one if n == 1 else many}")
+    text = f"<b>{s.count}</b> finished · " + ", ".join(parts)
+    if s.timed:
+        text += f" · <b>{s.hours:,.0f} h</b>"
+        if s.timed < s.count:
+            text += f" <span style='color:#8a8f9c'>(time known for {s.timed})</span>"
+    return text
+
+
 class CompletionDialog(QDialog):
     """Add or edit one entry: name, date (or just the year), section, platform, notes."""
 
@@ -180,8 +234,15 @@ class CompletedPage(QWidget):
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._menu)
-        self.list.itemDoubleClicked.connect(lambda it: self.edit(it.data(IdRole)))
+        # Double-click or Enter (connecting itemDoubleClicked too would open it twice)
+        self.list.itemActivated.connect(lambda it: self.edit(it.data(IdRole)))
         self.list.model().rowsMoved.connect(self._moved)
+        self.stats = QLabel()
+        self.stats.setTextFormat(Qt.RichText)
+        self.chart = MonthChart()
+        stats_row = QHBoxLayout()
+        stats_row.addWidget(self.stats, 1)
+        stats_row.addWidget(self.chart)
         self.hint = QLabel()
         self.hint.setObjectName("Muted")
         self.hint.setWordWrap(True)
@@ -189,6 +250,7 @@ class CompletedPage(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 14, 18, 8)
         lay.addLayout(head)
+        lay.addLayout(stats_row)
         lay.addWidget(self.list, 1)
         lay.addWidget(self.hint)
         QShortcut(QKeySequence.Delete, self.list, activated=self.remove_selected)
@@ -202,6 +264,10 @@ class CompletedPage(QWidget):
     def refresh(self) -> None:
         with db.session() as conn:
             self.entries = completions.list_year(conn, self.year)
+            stats = completions.year_stats(conn, self.year)
+        self.stats.setText(stats_text(stats))
+        self.chart.set_counts(stats.by_month)
+        self.chart.setVisible(self.year is not None and stats.count > stats.undated)
         self.heading.setText(f"Completed in {self.year}" if self.year else "Completed")
         missing = sum(1 for c in self.entries if not c.poster_path())
         n = len(self.entries)

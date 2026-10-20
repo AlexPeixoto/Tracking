@@ -29,8 +29,12 @@ remembers what you've finished, even when the drive is unplugged.
   IMDb, Rotten Tomatoes, Metacritic, TMDB, AniList, MyAnimeList, AniDB, Kitsu, TVmaze,
   Trakt, OpenCritic, IGDB, Steam reviews, HowLongToBeat.
 - ⏱️ **Total time** for everything: the runtime of all episodes, or HowLongToBeat hours for games.
-- ✅ **Completed log by year**: mark things done, import old years from CSV, edit dates, and
-  **export a year as a cover-grid image**.
+- ✅ **Completed log by year**: mark things done, import old years from CSV, edit dates, see
+  each year's stats, and **export a year as a cover-grid image**.
+- 📚 **Backlog**: what you own and haven't finished, with a *Shortest first* sort for
+  "what next?".
+- 🩺 **Library health**: items without a cover or score, games without a platform,
+  possible duplicates and missing files, each one click away from a fix.
 - 🛒 **Want to acquire**: search any service and keep a wish list; it moves into your
   library by itself when a scan finds it.
 - 🎮 **Steam accounts**: your owned games with **time played**, in their own section.
@@ -50,7 +54,7 @@ remembers what you've finished, even when the drive is unplugged.
   </tr>
   <tr>
     <td><img src="docs/images/completed.png" alt="Completed in 2024"><br>
-      <sub><b>Completed</b>: one page per year, drag covers into your own order.</sub></td>
+      <sub><b>Completed</b>: one page per year with its stats; drag covers into your own order.</sub></td>
     <td><img src="docs/images/export-dialog.png" alt="Export year as image"><br>
       <sub><b>Export year as image</b>: columns, cover size and shape, gaps, background.</sub></td>
   </tr>
@@ -99,12 +103,28 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 | **Ctrl+N** | Add to *Want to acquire*, or a *Completed* entry when you're there |
 | **Right-click** | Move to another section / platform, complete, refetch, remove |
 | **Export list…** | A spreadsheet of the items missing a cover or scores, or of what's shown |
+| **Library health…** (Ctrl+H) | What needs a look, with *Show* and *Fetch again* |
+
+<details>
+<summary>Keyboard</summary>
+
+| Key | |
+|---|---|
+| Arrows · Enter | Move around the grid · open an item |
+| Space | Mark the selected items completed (again: not completed) |
+| Ctrl+A | Select everything shown |
+| Ctrl+F · Esc | Search · clear the search |
+| Esc · Alt+← | Back from an item page |
+| F5 · Ctrl+N · Ctrl+L | Rescan · add (wish list / completed) · locations |
+</details>
 
 ## Completed, by year
 
 Everything you finish is logged with the day you marked it. The **Completed** section has one
 page per year: drag covers to reorder, double-click to edit the name, date, section, platform
-or notes, right-click to pick your own cover.
+or notes, right-click to pick your own cover. Each year shows what you finished per section,
+the hours it took (Steam play time or HowLongToBeat for games, runtime for the rest) and a
+month-by-month chart.
 
 **Import older years** with *Import CSV…*, one file per year or all at once:
 
@@ -133,6 +153,8 @@ its exact size in pixels:
 | Gap · Margin | In pixels |
 | Background | Transparent, black, white or any colour |
 | Title · labels | "Completed in 2024" on top; title and/or date under each cover |
+| Corner stamp | A small "2024 · 14 completed" badge in any corner |
+| Presets | Save your settings by name ("Twitter grid", "Big poster") and switch between them |
 | Format | PNG or JPG |
 
 *Export year › As CSV…* writes the same format the import reads.

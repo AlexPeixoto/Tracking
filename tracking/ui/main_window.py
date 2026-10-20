@@ -6,7 +6,7 @@ import os
 import subprocess
 
 from PySide6.QtCore import QSize, Qt, QThreadPool, QTimer, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListView, QMainWindow,
     QMenu, QMessageBox, QPushButton, QSplitter, QStackedWidget, QToolBar, QToolButton, QTreeWidget,
@@ -23,16 +23,24 @@ from .workers import CompletionCoversJob, EnrichJob, Job, ScanJob
 
 SECTIONS = [(c.key, c.label) for c in categories.CATEGORIES]
 SORTS = [("title", "Title"), ("avg", "Score: average"), ("best", "Score: highest"),
-         ("time", "Total time"), ("played", "Time played"), ("recent", "Recently added")]
+         ("time", "Total time"), ("short", "Shortest first"), ("played", "Time played"),
+         ("recent", "Recently added")]
 NavRole = Qt.UserRole + 10
 WANT = "want"  # sidebar navigation: (WANT, category or None) is the "Want to acquire" list
 COMPLETED = "completed"  # sidebar navigation: (COMPLETED, year or None)
+FOCUS = "focus"  # (FOCUS, heading): a list picked elsewhere (Library health › Show)
+BACKLOG = "backlog"  # sidebar navigation: (BACKLOG, category or None), owned and not finished
 STEAM = "steam"  # sidebar navigation: (STEAM, None) is the games of your Steam accounts
 
 
 def view_of(item: db.Item) -> str | None:
     """The sidebar part an item belongs to: WANT, STEAM or None (the library)."""
     return {db.WANTED: WANT, db.STEAM: STEAM}.get(item.source)
+
+
+def in_backlog(item: db.Item) -> bool:
+    """Yours (on disk or marked as got), not finished, not gone missing."""
+    return view_of(item) is None and not item.completed and not item.missing
 
 
 def played_order(item: db.Item) -> tuple:
@@ -53,11 +61,13 @@ class MainWindow(QMainWindow):
         self.mounts: dict[str, str | None] = {}
         self.labels: dict[str, str] = {}
         self.nav: tuple[str | None, str | None] = (None, None)
+        self.focus_ids: set[int] = set()  # the items a (FOCUS, heading) view shows
         self.warnings: list[str] = []
         self.all_items: list[db.Item] = []
 
         self._build_toolbar()
         self._build_body()
+        self._build_shortcuts()
         self._build_status()
         self.refresh_volumes()
         self.reload()
@@ -99,6 +109,7 @@ class MainWindow(QMainWindow):
         menu.addAction("Items shown now…", lambda: self.export_list(missing_only=False))
         export.setMenu(menu)
         tb.addWidget(export)
+        action("Library health…", self.open_health, "Ctrl+H")
         action("Settings…", self.open_settings, "Ctrl+,")
         action("Log", self.open_log, "Ctrl+Shift+L")
 
@@ -236,6 +247,34 @@ class MainWindow(QMainWindow):
         self.done_page.fetch_covers.connect(lambda ids: self.start_job(CompletionCoversJob(ids)))
         self.stack.addWidget(self.done_page)
 
+    def _build_shortcuts(self):
+        """Keyboard: Space completes the selected cards, Ctrl+F searches, Esc / Alt+Left go
+        back from an item page. (Arrows, Enter to open and Ctrl+A come with the grid.)"""
+        QShortcut(QKeySequence(Qt.Key_Space), self.grid, self._toggle_selected,
+                  context=Qt.WidgetShortcut)
+        QShortcut(QKeySequence.Find, self, self._focus_search)
+        for key in (QKeySequence(Qt.Key_Escape), QKeySequence(Qt.ALT | Qt.Key_Left)):
+            QShortcut(key, self.page, self._back_from_page, context=Qt.WidgetWithChildrenShortcut)
+        QShortcut(QKeySequence(Qt.Key_Escape), self.search, self.search.clear,
+                  context=Qt.WidgetShortcut)
+
+    def _toggle_selected(self):
+        ids = self._selected_ids()
+        items = [i for i in (self._find(x) for x in ids) if i and view_of(i) != WANT]
+        if items:
+            # Mixed selection: complete them all; all completed: un-complete.
+            self.set_completed([i.id for i in items], not all(i.completed for i in items))
+
+    def _focus_search(self):
+        if self.stack.currentIndex() != 0:
+            self.stack.setCurrentIndex(0)
+        self.search.setFocus()
+        self.search.selectAll()
+
+    def _back_from_page(self):
+        self.stack.setCurrentIndex(2 if self.nav[0] == COMPLETED else 0)
+        self.grid.setFocus()
+
     def _build_status(self):
         sb = self.statusBar()
         self.status = QLabel("Ready")
@@ -303,6 +342,28 @@ class MainWindow(QMainWindow):
                         current = child
                 node.setExpanded(True)
 
+        # Backlog: what you have and haven't finished yet, per section.
+        backlog: dict[str, int] = {}
+        for i in self.all_items:
+            if in_backlog(i):
+                backlog[i.category] = backlog.get(i.category, 0) + 1
+        node = QTreeWidgetItem([f"Backlog   {sum(backlog.values())}"])
+        node.setData(0, NavRole, (BACKLOG, None))
+        f = node.font(0)
+        f.setBold(True)
+        node.setFont(0, f)
+        node.setToolTip(0, "What you have and haven't finished. Try Sort: Shortest first.")
+        self.sidebar.addTopLevelItem(node)
+        if self.nav == (BACKLOG, None):
+            current = node
+        for key, label in SECTIONS:
+            if backlog.get(key):
+                child = QTreeWidgetItem([f"{label}   {backlog[key]}"])
+                child.setData(0, NavRole, (BACKLOG, key))
+                node.addChild(child)
+                if self.nav == (BACKLOG, key):
+                    current = child
+
         # Completed: everything you finished, per year (also entries outside the library).
         done_years = done_years or {}
         done = QTreeWidgetItem([f"Completed   {sum(done_years.values())}"])
@@ -354,7 +415,10 @@ class MainWindow(QMainWindow):
             if self.nav == (WANT, key):
                 current = child
         want.setExpanded(True)
-        self.sidebar.setCurrentItem(current)
+        if self.nav[0] != FOCUS:  # a Library health list isn't a sidebar entry
+            self.sidebar.setCurrentItem(current)
+        else:
+            self.sidebar.setCurrentItem(None)
         self.sidebar.blockSignals(False)
 
     def _nav_changed(self, cur: QTreeWidgetItem | None, _prev=None):
@@ -379,15 +443,20 @@ class MainWindow(QMainWindow):
         self.apply_filter()
 
     def apply_filter(self):
+        if self.nav[0] == FOCUS:
+            self._apply_focus()
+            return
+        backlog_view = self.nav[0] == BACKLOG
         view = self.nav[0] if self.nav[0] in (WANT, STEAM) else None
         wanted_view, steam_view = view == WANT, view == STEAM
-        category, platform = (self.nav[1], None) if view else self.nav
+        category, platform = (self.nav[1], None) if (view or backlog_view) else self.nav
         needle = self.search.text().strip().lower()
         hide_done, hide_missing = self.hide_done.isChecked(), self.hide_missing.isChecked()
         hide_no_cover = self.hide_no_cover.isChecked()
         items = [
             i for i in self.all_items
             if view_of(i) == view
+            and (not backlog_view or in_backlog(i))
             and (not category or i.category == category)
             and (not platform or (i.platform or db.UNKNOWN_PLATFORM) == platform)
             and (not needle or needle in i.title.lower() or needle in i.rel_path.lower())
@@ -404,6 +473,9 @@ class MainWindow(QMainWindow):
             items.sort(key=score)
         elif key == "time":
             items.sort(key=lambda i: -(i.total_hours or 0))
+        elif key == "short":
+            # Quickest to finish first; unknown length last.
+            items.sort(key=lambda i: (i.total_hours is None, i.total_hours or 0, i.title.lower()))
         elif key == "played":
             items.sort(key=played_order)
         elif key == "recent":
@@ -416,6 +488,8 @@ class MainWindow(QMainWindow):
             heading = f"Want to acquire · {heading}" if category else "Want to acquire"
         if steam_view:
             heading = "Steam"
+        if backlog_view:
+            heading = f"Backlog · {heading}" if category else "Backlog"
         self.heading.setText(heading)
         self.add_btn.setVisible(wanted_view or steam_view)
         self.add_btn.setText("+ Add Steam account…" if steam_view else "+ Add…")
@@ -426,6 +500,9 @@ class MainWindow(QMainWindow):
             played_h = sum(i.playtime_min or 0 for i in items) / 60
             done = sum(1 for i in items if i.completed)
             self.count.setText(f"{len(items)} games · {played_h:,.0f} h played · {done} completed")
+        elif backlog_view:
+            total_h = sum(i.total_hours or 0 for i in items)
+            self.count.setText(f"{len(items)} not finished yet · {total_h:,.0f} h in all")
         elif wanted_view:
             total_h = sum(i.total_hours or 0 for i in items)
             self.count.setText(f"{len(items)} items · {total_h:,.0f} h if you got them all")
@@ -434,6 +511,32 @@ class MainWindow(QMainWindow):
             left_h = sum(i.total_hours or 0 for i in items if not i.completed)
             self.count.setText(f"{len(items)} items · {done} completed · {left_h:,.0f} h to go")
         self.model.set_items(items)
+
+    def _apply_focus(self):
+        needle = self.search.text().strip().lower()
+        items = sorted((i for i in self.all_items if i.id in self.focus_ids
+                        and (not needle or needle in i.title.lower())),
+                       key=lambda i: (i.title.lower(), i.platform or ""))
+        self.heading.setText(self.nav[1])
+        self.add_btn.hide()
+        self.count.setText(f"{len(items)} items · click a section in the sidebar to go back")
+        self.model.set_items(items)
+
+    def open_health(self):
+        dlg = dialogs.HealthDialog(self.all_items, self)
+        dlg.show_items.connect(self.show_focus)
+        dlg.refetch.connect(lambda ids: self.start_job(EnrichJob(ids, force=True)))
+        dlg.exec()
+
+    def show_focus(self, heading: str, ids: list[int]):
+        """Show just these items (from Library health), whatever their section."""
+        self.focus_ids = set(ids)
+        self.nav = (FOCUS, heading)
+        self.sidebar.blockSignals(True)
+        self.sidebar.setCurrentItem(None)  # so any sidebar click goes back
+        self.sidebar.blockSignals(False)
+        self.stack.setCurrentIndex(0)
+        self.apply_filter()
 
     def _selected_ids(self) -> list[int]:
         return [i.data(ItemRole).id for i in self.grid.selectionModel().selectedIndexes()]
