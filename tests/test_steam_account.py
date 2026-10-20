@@ -246,7 +246,9 @@ def test_steam_section_in_window(conn, monkeypatch):
     w = mw.MainWindow()
     try:
         tops = [w.sidebar.topLevelItem(n) for n in range(w.sidebar.topLevelItemCount())]
-        assert [t.text(0) for t in tops if t.data(0, mw.NavRole)[0] == mw.STEAM] == ["Steam   3"]
+        games = next(t for t in tops if t.data(0, mw.NavRole) == ("game", None))
+        kids = [games.child(n) for n in range(games.childCount())]   # Steam lives under Games
+        assert [k.text(0) for k in kids if k.data(0, mw.NavRole)[0] == mw.STEAM] == ["Steam   3"]
         assert tops[0].text(0) == "All items   0"         # not counted in the library
         w.nav = (None, None)
         w.apply_filter()

@@ -31,8 +31,6 @@ remembers what you've finished, even when the drive is unplugged.
 - ⏱️ **Total time** for everything: the runtime of all episodes, or HowLongToBeat hours for games.
 - ✅ **Completed log by year**: mark things done, import old years from CSV, edit dates, see
   each year's stats, and **export a year as a cover-grid image**.
-- 📚 **Backlog**: what you own and haven't finished, with a *Shortest first* sort for
-  "what next?".
 - 🗂️ **Planning board**: *Up next*, *Playing / Watching*, *On hold* and *Done this year* for
   games, anime, movies and TV (show one section or combine several). Drag cards between columns; playing
   something moves it to *Playing* by itself, and each column adds up the hours left.
@@ -43,8 +41,10 @@ remembers what you've finished, even when the drive is unplugged.
 - ▶️ **Play from the library**: PC games start their own .exe, console games open in the
   emulator you pick per platform (zipped discs are unpacked for you), Steam games in Steam.
   Filter games by *Installed*, *Installer* or *ROM / disc*, and sort by *Recently played*.
-- 🎮 **Steam accounts**: your owned games with **time played**, in their own section.
-- 🎲 **What should I play?**: one suggestion at a time from Up next and your Backlog, by
+- 🎮 **Steam accounts**: your owned games with **time played**, under Games › Steam; tick
+  *Include Steam* to see them with the rest of your games.
+- 🎲 **What should I play?**: one suggestion at a time from Up next and your backlog (what you
+  own and haven't finished), by
   section, length ("under 10 h") and what's on connected drives.
 - 📅 **Coming up** on each page: a show's next episode, when an anime's next episode airs, a
   game's release date and Steam sales.
@@ -105,20 +105,17 @@ with progress and hours left on every card.</sub></p>
       in bold); next episodes and air dates for shows and anime.</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/images/backlog.png" alt="Backlog"><br>
-      <sub><b>Backlog</b>: what you have and haven't finished, here sorted
-      <i>Shortest first</i>.</sub></td>
+    <td><img src="docs/images/health.png" alt="Library health"><br>
+      <sub><b>Library health</b>: what needs a look, with Show and Fetch again.</sub></td>
     <td><img src="docs/images/want.png" alt="Want to acquire"><br>
       <sub><b>Want to acquire</b>: things you don't have yet, with covers and scores.</sub></td>
   </tr>
 </table>
 
 <details>
-<summary><b>More</b>: the exported image, and Library health</summary>
+<summary><b>More</b>: the exported image</summary>
 <br>
 <img src="docs/images/completed-2024.jpg" alt="Games completed in 2024" width="560">
-<br><br>
-<img src="docs/images/health.png" alt="Library health" width="560">
 </details>
 
 ## Getting started
@@ -152,7 +149,8 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 | **Ctrl+N** | Add to *Want to acquire*, or a *Completed* entry when you're there |
 | **Right-click** | Move to another section / platform, complete, refetch, remove |
 | **Export list…** | A spreadsheet of the items missing a cover or scores, or of what's shown |
-| **What should I play?** (Ctrl+R) | A random pick from Up next / Backlog, with filters |
+| **What should I play?** (Ctrl+R) | A random pick from Up next / your backlog, with filters |
+| **Sidebar** | Games, Completed and Want to acquire fold (▸ / ▾): double-click, or click a selected one; remembered |
 | **Export list… › For other trackers** | MyAnimeList XML, Letterboxd CSVs, or one CSV of everything |
 | **Library health…** (Ctrl+H) | What needs a look, with *Show* and *Fetch again* |
 | **Right-click › Plan** | Put items on the Planning board (Up next, Playing, On hold) or drop them |

@@ -71,22 +71,43 @@ def test_presets_and_stamp(conn, qt):
     assert corner(plain) != corner(stamped)
 
 
-def test_backlog_and_shortest_first(conn, qt):
+def test_shortest_first_and_hide_completed(conn, qt):
     from tracking.ui import main_window
 
     _item(conn, "Long", hltb_hours=80.0)
     _item(conn, "Short", hltb_hours=5.0)
     _item(conn, "Unknown length")
     done = _item(conn, "Finished", hltb_hours=1.0, completed=1)
-    _item(conn, "Gone", hltb_hours=2.0, missing=1)
-    library.add_wanted(conn, "game", "Wanted", 2025)
     conn.commit()
     w = main_window.MainWindow()
-    w.nav = (main_window.BACKLOG, None)
+    w.nav = ("game", None)
     w.sort.setCurrentIndex(w.sort.findData("short"))
+    w.hide_done.setChecked(True)
     w.reload()
     assert [i.title for i in w.model.items] == ["Short", "Long", "Unknown length"]
     assert done not in {i.id for i in w.model.items}
+    assert library.in_backlog(next(i for i in w.all_items if i.title == "Short"))
+
+
+def test_lean_sidebar_folds_and_remembers(conn, qt):
+    from tracking.ui import main_window
+
+    _item(conn, "Okami")
+    conn.execute("INSERT INTO items(volume_uid, rel_path, is_dir, category, platform, title, source) "
+                 "VALUES('steam:1', 'app/1', 0, 'game', 'PC', 'Celeste', 'steam')")
+    conn.commit()
+    w = main_window.MainWindow()
+    tops = {w.sidebar.topLevelItem(i).text(0).split("   ")[0]: w.sidebar.topLevelItem(i)
+            for i in range(w.sidebar.topLevelItemCount())}
+    assert "Backlog" not in tops and "Steam" not in tops and "Unknown" not in tops
+    games = tops["Games"]
+    kids = [games.child(i).text(0).split("   ")[0] for i in range(games.childCount())]
+    assert kids == ["PS2", "Steam"] and not games.isExpanded()           # folded by default
+    games.setExpanded(True)                                               # you open it...
+    w.reload()
+    tops = {w.sidebar.topLevelItem(i).text(0).split("   ")[0]: w.sidebar.topLevelItem(i)
+            for i in range(w.sidebar.topLevelItemCount())}
+    assert tops["Games"].isExpanded()                                     # ...and it stays open
 
 
 def test_duplicates_and_health(conn):

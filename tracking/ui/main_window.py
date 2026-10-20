@@ -62,7 +62,6 @@ COMPLETED = "completed"  # sidebar navigation: (COMPLETED, year or None)
 PLANNING = "planning"  # sidebar navigation: (PLANNING, None), the Planning board
 FOCUS = "focus"  # (FOCUS, heading): a list picked elsewhere (Library health › Show)
 WATCHING = "watching"  # sidebar navigation: (WATCHING, None), series you're partway through
-BACKLOG = "backlog"  # sidebar navigation: (BACKLOG, category or None), owned and not finished
 STEAM = "steam"  # sidebar navigation: (STEAM, None) is the games of your Steam accounts
 
 
@@ -83,6 +82,16 @@ def watching(item: db.Item) -> bool:
 def played_order(item: db.Item) -> tuple:
     """"Time played" sort: most played first, never-played next, unknown last."""
     return (item.playtime_min is None, -(item.playtime_min or 0), item.title.lower())
+
+
+TextRole = Qt.UserRole + 11  # a sidebar section's text without its ▸ / ▾
+
+
+def _chevron(node: QTreeWidgetItem) -> None:
+    """▸ folded / ▾ open after a section's count (the theme hides Qt's own arrows)."""
+    base = node.data(0, TextRole) or node.text(0)
+    if node.childCount():
+        node.setText(0, f"{base}   {'▾' if node.isExpanded() else '▸'}")
 
 
 def _child_node(parent: QTreeWidgetItem, text: str, nav: tuple) -> QTreeWidgetItem:
@@ -183,6 +192,12 @@ class MainWindow(QMainWindow):
         self.sidebar.setMinimumWidth(200)
         self.sidebar.setMaximumWidth(280)
         self.sidebar.currentItemChanged.connect(self._nav_changed)
+        self.sidebar.itemExpanded.connect(self._section_folded)
+        self.sidebar.itemCollapsed.connect(self._section_folded)
+        # A second click on a selected section opens / closes it (double-click does too).
+        self.sidebar.itemClicked.connect(self._toggle_if_selected)
+        self._was_current = None
+        self.sidebar.currentItemChanged.connect(lambda cur, prev: setattr(self, "_was_current", prev))
         split.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
@@ -563,6 +578,30 @@ class MainWindow(QMainWindow):
         """The page to go back to from an item: the board, a Completed year, or the grid."""
         return {COMPLETED: 2, PLANNING: 3}.get(self.nav[0], 0)
 
+    SIDEBAR_OPEN = "sidebar_open"
+
+    def _open_sections(self) -> set[str]:
+        with db.session() as conn:
+            saved = db.get_setting(conn, self.SIDEBAR_OPEN, None)
+        return set(saved.split(",")) if saved is not None else set()
+
+    def _section_folded(self, node: QTreeWidgetItem, *_) -> None:
+        """Remember which sidebar sections are open."""
+        nav = node.data(0, NavRole)
+        if not nav or node.parent() is not None:
+            return
+        _chevron(node)
+        key = nav[0] or ""
+        open_ = self._open_sections()
+        open_ = open_ | {key} if node.isExpanded() else open_ - {key}
+        with db.session() as conn:
+            db.set_setting(conn, self.SIDEBAR_OPEN, ",".join(sorted(k for k in open_ if k)))
+
+    def _toggle_if_selected(self, item: QTreeWidgetItem, _col: int = 0) -> None:
+        if item.childCount() and self._was_current is item:
+            item.setExpanded(not item.isExpanded())
+        self._was_current = item
+
     def _top_node(self, text: str, nav: tuple, tip: str | None = None) -> QTreeWidgetItem:
         """A bold top-level sidebar entry."""
         node = QTreeWidgetItem([text])
@@ -591,16 +630,28 @@ class MainWindow(QMainWindow):
                               "Up next, Playing / Watching, On hold and Done this year")
         if self.nav == (PLANNING, None):
             current = plan
+        open_ = self._open_sections()
+        parents: list[tuple[QTreeWidgetItem, str]] = []
         for key, label in SECTIONS:
-            node = self._top_node(f"{label}   {counts.get(key, 0)}", (key, None))
+            n = counts.get(key, 0)
+            if not n and key == "unknown" and self.nav[0] != key:
+                continue  # an empty "Unknown" is just noise
+            node = self._top_node(f"{label}   {n}", (key, None))
             if self.nav == (key, None):
                 current = node
             if key == "game":
-                for plat, n in plats.items():
-                    child = _child_node(node, f"{plat}   {n}", ("game", plat))
+                for plat, pn in plats.items():
+                    child = _child_node(node, f"{plat}   {pn}", ("game", plat))
                     if self.nav == ("game", plat):
                         current = child
-                node.setExpanded(True)
+                if steam_games or self.nav[0] == STEAM:
+                    # Steam account games: here, apart from the library (Include Steam adds
+                    # them to Games and All items).
+                    child = _child_node(node, f"Steam   {steam_games}", (STEAM, None))
+                    child.setToolTip(0, "Games from your Steam account, with play time")
+                    if self.nav == (STEAM, None):
+                        current = child
+                parents.append((node, "game"))
 
         # Continue watching: series you're partway through (only when there are some).
         started = sum(1 for i in self.all_items if watching(i))
@@ -609,21 +660,6 @@ class MainWindow(QMainWindow):
                                   "Series you've started playing from here, most recent first")
             if self.nav == (WATCHING, None):
                 current = node
-
-        # Backlog: what you have and haven't finished yet, per section.
-        backlog: dict[str, int] = {}
-        for i in self.all_items:
-            if in_backlog(i):
-                backlog[i.category] = backlog.get(i.category, 0) + 1
-        node = self._top_node(f"Backlog   {sum(backlog.values())}", (BACKLOG, None),
-                              "What you have and haven't finished. Try Sort: Shortest first.")
-        if self.nav == (BACKLOG, None):
-            current = node
-        for key, label in SECTIONS:
-            if backlog.get(key):
-                child = _child_node(node, f"{label}   {backlog[key]}", (BACKLOG, key))
-                if self.nav == (BACKLOG, key):
-                    current = child
 
         # Completed: everything you finished, per year (also entries outside the library).
         done_years = done_years or {}
@@ -636,27 +672,27 @@ class MainWindow(QMainWindow):
             child = _child_node(done, f"{year}   {n}", (COMPLETED, year))
             if self.nav == (COMPLETED, year):
                 current = child
-        done.setExpanded(True)
+        parents.append((done, COMPLETED))
 
-        # Steam: the games your Steam accounts own, apart from the library.
-        node = self._top_node(f"Steam   {steam_games}", (STEAM, None),
-                              "Games from your Steam account, with play time "
-                              "(Locations › Add Steam account)")
-        if self.nav == (STEAM, None):
-            current = node
-
-        # "Want to acquire": things you don't have yet, per section.
+        # "Want to acquire": things you don't have yet, per section (only sections with some).
         wanted = wanted or {}
         want = self._top_node(f"Want to acquire   {sum(wanted.values())}", (WANT, None))
         if self.nav == (WANT, None):
             current = want
         for key, label in SECTIONS:
-            if key == "unknown":
+            if not wanted.get(key) and self.nav != (WANT, key):
                 continue
             child = _child_node(want, f"{label}   {wanted.get(key, 0)}", (WANT, key))
             if self.nav == (WANT, key):
                 current = child
-        want.setExpanded(True)
+        parents.append((want, WANT))
+
+        # Subsections fold away (the arrow, or double-click); what's open is remembered,
+        # and a selected entry inside a folded section opens it.
+        for node, key in parents:
+            node.setData(0, TextRole, node.text(0))
+            node.setExpanded(key in open_ or current.parent() is node)
+            _chevron(node)
         if self.nav[0] != FOCUS:  # a Library health list isn't a sidebar entry
             self.sidebar.setCurrentItem(current)
         else:
@@ -703,10 +739,9 @@ class MainWindow(QMainWindow):
             self.count.setToolTip("Enter opens a series, Ctrl+Enter plays its next episode")
             self.model.set_items(items)
             return
-        backlog_view = self.nav[0] == BACKLOG
         view = self.nav[0] if self.nav[0] in (WANT, STEAM) else None
         wanted_view, steam_view = view == WANT, view == STEAM
-        category, platform = (self.nav[1], None) if (view or backlog_view) else self.nav
+        category, platform = (self.nav[1], None) if view else self.nav
         needle = self.search.text().strip().lower()
         hide_done, hide_missing = self.hide_done.isChecked(), self.hide_missing.isChecked()
         hide_no_cover = self.hide_no_cover.isChecked()
@@ -714,7 +749,7 @@ class MainWindow(QMainWindow):
         games_view = category == "game"
         self.install.setVisible(games_view)
         inst = self.install.currentData() if games_view else ""
-        library_view = view is None and not backlog_view
+        library_view = view is None
         self.include_steam.setVisible(library_view and category in (None, "game")
                                       and any(view_of(i) == STEAM for i in self.all_items))
         with_steam = library_view and self.include_steam.isChecked()
@@ -723,7 +758,6 @@ class MainWindow(QMainWindow):
             i for i in self.all_items
             if (view_of(i) == view
                 or (with_steam and view_of(i) == STEAM and i.id not in dupes))
-            and (not backlog_view or in_backlog(i))
             and (not category or i.category == category)
             and (not platform or (i.platform or db.UNKNOWN_PLATFORM) == platform)
             and (not needle or needle in i.title.lower() or needle in i.rel_path.lower())
@@ -761,8 +795,6 @@ class MainWindow(QMainWindow):
             heading = f"Want to acquire · {heading}" if category else "Want to acquire"
         if steam_view:
             heading = "Steam"
-        if backlog_view:
-            heading = f"Backlog · {heading}" if category else "Backlog"
         self.heading.setText(heading)
         self.add_btn.setVisible(wanted_view or steam_view)
         self.add_btn.setText("+ Add Steam account…" if steam_view else "+ Add…")
@@ -773,9 +805,6 @@ class MainWindow(QMainWindow):
             played_h = sum(i.playtime_min or 0 for i in items) / 60
             done = sum(1 for i in items if i.completed)
             self.count.setText(f"{len(items)} games · {played_h:,.0f} h played · {done} completed")
-        elif backlog_view:
-            total_h = sum(i.total_hours or 0 for i in items)
-            self.count.setText(f"{len(items)} not finished yet · {total_h:,.0f} h in all")
         elif wanted_view:
             total_h = sum(i.total_hours or 0 for i in items)
             self.count.setText(f"{len(items)} items · {total_h:,.0f} h if you got them all")
