@@ -40,6 +40,19 @@ def edit_item(conn: sqlite3.Connection, item: db.Item, *, title: str, category: 
         item.title, item.category, item.platform, item.year)
 
 
+def use_match(conn: sqlite3.Connection, item: db.Item, title: str, year: int | None = None,
+              steam_appid: int | None = None) -> None:
+    """Find match: look the item up as ``title`` from now on (and as that Steam app),
+    dropping what was fetched for the old name. Your notes / completion stay."""
+    conn.execute(
+        "UPDATE items SET user_title=?, year=COALESCE(?, year), steam_appid=COALESCE(?, steam_appid), "
+        "enriched_at=NULL, poster=NULL, rating=NULL, rating_max=NULL, rating_source=NULL, "
+        "summary=NULL, external_url=NULL, external_id=NULL WHERE id=?",
+        (title if title != item.detected_title else None, year, steam_appid, item.id))
+    conn.execute("DELETE FROM scores WHERE item_id=?", (item.id,))
+    conn.execute("DELETE FROM episodes WHERE item_id=?", (item.id,))
+
+
 def move_items(conn: sqlite3.Connection, item_ids: list[int], category: str,
                platform: str | None = None) -> None:
     """Put items in another section (and platform, for games)."""
@@ -172,8 +185,8 @@ def health(items: list[db.Item]) -> list[HealthCheck]:
     present = [i for i in lib if not i.missing]
     dupes = [i.id for g in find_duplicates(lib) for i in g]
     return [
-        HealthCheck("no_cover", "No cover", "Nothing found yet. Fetch again retries them all;\n"
-                    "fix a misread title on the item page first.",
+        HealthCheck("no_cover", "No cover", "Nothing found yet. Fetch again retries them all; for one\n"
+                    "that stays empty, use Find match… on its page.",
                     [i.id for i in present if not i.poster], fetch=True),
         HealthCheck("no_score", "No score from any site",
                     "Movies need an OMDb or TMDB key, retro games an IGDB key.",

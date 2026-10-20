@@ -6,14 +6,14 @@ from __future__ import annotations
 
 from .. import platforms
 from .base import (
-    Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, best_match, cached_json,
+    Candidate, Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, best_match, cached_json,
     platform_matches,
 )
 
 _limit = RateLimiter(1.0)
 
 
-def lookup(q: Query) -> Metadata | None:
+def _results(q: Query) -> list[dict]:
     def fetch():
         from howlongtobeatpy import HowLongToBeat
 
@@ -31,11 +31,26 @@ def lookup(q: Query) -> Metadata | None:
 
     try:
         # "hltb3": older caches stored failed requests as "no results"
-        results = cached_json("hltb3", q.title.lower(), 30, fetch)
+        return cached_json("hltb3", q.title.lower(), 30, fetch)
     except ProviderError:
         raise
     except Exception as e:
         raise ProviderError(f"HowLongToBeat lookup failed: {e}") from e
+
+
+def search(q: Query) -> list[Candidate]:
+    """Every game HowLongToBeat has under that name (any platform), for Find match."""
+    out = []
+    for r in _results(q):
+        plats = ", ".join(r.get("platforms") or [])
+        hours = f" · {r['main']:.0f} h" if r.get("main") else ""
+        out.append(Candidate(r.get("name") or "?", r.get("year") or None,
+                             f"HowLongToBeat · {plats or 'game'}{hours}", r.get("image"), r.get("url")))
+    return out
+
+
+def lookup(q: Query) -> Metadata | None:
+    results = _results(q)
     want = platforms.service_name(q.platform, "hltb")
     # The platform bonus picks the PS3 "Demon's Souls" over the PS5 remake.
     best = best_match(q.title, None, results, names=lambda r: [r.get("name")],
@@ -55,4 +70,4 @@ def lookup(q: Query) -> Metadata | None:
     )
 
 
-PROVIDER = Provider("hltb", "HowLongToBeat", frozenset({"game"}), lookup, cover_rank=20)
+PROVIDER = Provider("hltb", "HowLongToBeat", frozenset({"game"}), lookup, cover_rank=20, search=search)

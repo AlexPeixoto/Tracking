@@ -13,17 +13,19 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from .. import categories, completions, db, library, platforms, scan, volumes
+from .. import categories, completions, db, launcher, library, platforms, scan, volumes
+from ..scan import install
 from ..sources import steam
 from . import dialogs
 from .completed_page import CompletedPage
 from .grid import OFFLINE_TEXT, CardDelegate, ItemModel, ItemRole
 from .item_page import ItemPage
-from .workers import CompletionCoversJob, EnrichJob, Job, ScanJob
+from .workers import CompletionCoversJob, LaunchJob, EnrichJob, Job, ScanJob
 
 SECTIONS = [(c.key, c.label) for c in categories.CATEGORIES]
 SORTS = [("title", "Title"), ("avg", "Score: average"), ("best", "Score: highest"),
          ("time", "Total time"), ("short", "Shortest first"), ("played", "Time played"),
+         ("launched", "Recently played"),
          ("recent", "Recently added")]
 NavRole = Qt.UserRole + 10
 WANT = "want"  # sidebar navigation: (WANT, category or None) is the "Want to acquire" list
@@ -69,6 +71,11 @@ class MainWindow(QMainWindow):
         self._build_body()
         self._build_shortcuts()
         self._build_status()
+        # Drives come and go: look every 25 s, and refresh only when something changed.
+        self._drive_sig = None
+        self.drive_timer = QTimer(self)
+        self.drive_timer.timeout.connect(self._poll_drives)
+        self.drive_timer.start(25_000)
         self.refresh_volumes()
         self.reload()
 
@@ -154,6 +161,19 @@ class MainWindow(QMainWindow):
             hide_done = db.get_setting(conn, "hide_completed") == "1"
             hide_missing = db.get_setting(conn, "hide_missing") == "1"
             hide_no_cover = db.get_setting(conn, "hide_no_cover") == "1"
+            hide_offline = db.get_setting(conn, "hide_offline") == "1"
+            install_filter = db.get_setting(conn, "install_filter")
+        self.install = QComboBox()
+        self.install.setToolTip("Games: installed, still an installer, or a console ROM / disc")
+        self.install.addItem("All games", "")
+        for key, label in install.STATES.items():
+            self.install.addItem(label, key)
+        self.install.setCurrentIndex(max(0, self.install.findData(install_filter or "")))
+        self.install.currentIndexChanged.connect(self._save_install_filter)
+        self.hide_offline = QCheckBox("Hide offline")
+        self.hide_offline.setToolTip("Hide items on drives that aren't connected "
+                                     "(drives are checked every 25 s)")
+        self.hide_offline.setChecked(hide_offline)
         self.hide_no_cover = QCheckBox("Hide no cover")
         self.hide_no_cover.setToolTip("Hide items that have no cover image")
         self.hide_no_cover.setChecked(hide_no_cover)
@@ -162,7 +182,7 @@ class MainWindow(QMainWindow):
         self.hide_missing = QCheckBox("Hide missing")
         self.hide_missing.setChecked(hide_missing)
         for cb, key in ((self.hide_done, "hide_completed"), (self.hide_missing, "hide_missing"),
-                        (self.hide_no_cover, "hide_no_cover")):
+                        (self.hide_no_cover, "hide_no_cover"), (self.hide_offline, "hide_offline")):
             cb.toggled.connect(lambda on, key=key: self._save_filter(key, on))
         head.addWidget(self.heading)
         self.add_btn = QPushButton("+ Add…")
@@ -179,6 +199,8 @@ class MainWindow(QMainWindow):
         head.addWidget(self.hide_done)
         head.addWidget(self.hide_missing)
         head.addWidget(self.hide_no_cover)
+        head.addWidget(self.hide_offline)
+        head.addWidget(self.install)
         head.addSpacing(8)
         head.addWidget(self.search)
         head.addWidget(self.sort)
@@ -236,6 +258,8 @@ class MainWindow(QMainWindow):
         self.page.changed.connect(self._item_changed)
         self.page.refetch.connect(lambda i: self.start_job(EnrichJob([i], force=True)))
         self.page.open_folder.connect(self.open_item)
+        self.page.play.connect(self.play)
+        self.page.find_match.connect(self.find_match)
         self.page.deleted.connect(self._item_deleted)
         self.stack.addWidget(self.page)
 
@@ -253,10 +277,58 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Space), self.grid, self._toggle_selected,
                   context=Qt.WidgetShortcut)
         QShortcut(QKeySequence.Find, self, self._focus_search)
-        for key in (QKeySequence(Qt.Key_Escape), QKeySequence(Qt.ALT | Qt.Key_Left)):
-            QShortcut(key, self.page, self._back_from_page, context=Qt.WidgetWithChildrenShortcut)
+        # (Esc is the item page's Back button shortcut already; a second one would clash.)
+        QShortcut(QKeySequence(Qt.ALT | Qt.Key_Left), self.page, self._back_from_page,
+                  context=Qt.WidgetWithChildrenShortcut)
+        for key in (Qt.CTRL | Qt.Key_Return, Qt.CTRL | Qt.Key_Enter):
+            QShortcut(QKeySequence(key), self.grid, self._play_selected, context=Qt.WidgetShortcut)
         QShortcut(QKeySequence(Qt.Key_Escape), self.search, self.search.clear,
                   context=Qt.WidgetShortcut)
+
+    def find_match(self, item_id: int):
+        item = self._find(item_id)
+        if item and dialogs.MatchDialog(item, self).exec():
+            self.reload()
+            self.start_job(EnrichJob([item_id], force=True))
+            if self.stack.currentIndex() == 1:
+                self.show_item(item_id)
+
+    def _play_selected(self):
+        ids = self._selected_ids()
+        if ids:
+            self.play(ids[0])
+
+    def play(self, item_id: int):
+        """Start a game (in the background: a zipped image may need unpacking first)."""
+        item = self._find(item_id)
+        if not item:
+            return
+        try:
+            with db.session() as conn:
+                la = launcher.plan(conn, item, self.mounts.get(item.volume_uid))
+        except launcher.LaunchError as e:
+            QMessageBox.information(self, "Play", str(e))
+            return
+        job = LaunchJob(la)
+        job.signals.progress.connect(self._show_progress)
+        job.signals.warning.connect(lambda text: QMessageBox.warning(self, "Play", text))
+        job.signals.item_changed.connect(self._item_changed)
+        job.signals.finished.connect(lambda summary: self.status.setText(summary))
+        self._launches = [j for j in getattr(self, "_launches", []) if not j.done] + [job]
+        job.signals.finished.connect(lambda *_: setattr(job, "done", True))
+        job.done = False
+        QThreadPool.globalInstance().start(job)
+
+    def _save_install_filter(self, _index=None):
+        with db.session() as conn:
+            db.set_setting(conn, "install_filter", self.install.currentData() or "")
+        self.apply_filter()
+
+    def _offline(self, item: db.Item) -> bool:
+        """On a drive that isn't connected (Steam / wish-list items never are)."""
+        if item.source in (db.WANTED, "manual") or item.volume_uid.startswith("steam:"):
+            return False
+        return self.mounts.get(item.volume_uid) is None
 
     def _toggle_selected(self):
         ids = self._selected_ids()
@@ -291,6 +363,28 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(self.cancel_btn)
 
     # ------------------------------------------------------------------ data
+
+    def _poll_drives(self):
+        sig = tuple(sorted(repr(v) for v in volumes.list_volumes()))
+        if self._drive_sig is None:
+            self._drive_sig = sig
+            return
+        if sig == self._drive_sig:
+            return
+        self._drive_sig = sig
+        before = {u for u, m in self.mounts.items() if m}
+        self.refresh_volumes()
+        after = {u for u, m in self.mounts.items() if m}
+        came, went = after - before, before - after
+        if came or went:
+            names = lambda uids: ", ".join(self.labels.get(u, "drive") for u in uids)
+            self.status.setText("; ".join(
+                ([f"Connected: {names(came)}"] if came else [])
+                + ([f"Disconnected: {names(went)}"] if went else [])))
+            self.apply_filter()
+            self.grid.viewport().update()
+            if self.stack.currentIndex() == 1 and self.page.item:
+                self._fill_page(self.page.item)
 
     def refresh_volumes(self):
         known = volumes.list_volumes()
@@ -453,6 +547,10 @@ class MainWindow(QMainWindow):
         needle = self.search.text().strip().lower()
         hide_done, hide_missing = self.hide_done.isChecked(), self.hide_missing.isChecked()
         hide_no_cover = self.hide_no_cover.isChecked()
+        hide_offline = self.hide_offline.isChecked()
+        games_view = category == "game"
+        self.install.setVisible(games_view)
+        inst = self.install.currentData() if games_view else ""
         items = [
             i for i in self.all_items
             if view_of(i) == view
@@ -463,6 +561,8 @@ class MainWindow(QMainWindow):
             and not (hide_done and i.completed)
             and not (hide_missing and i.missing)
             and not (hide_no_cover and not i.poster)
+            and not (hide_offline and self._offline(i))
+            and (not inst or i.install_state == inst)
         ]
         key = self.sort.currentData()
         if key in ("avg", "best"):
@@ -476,6 +576,10 @@ class MainWindow(QMainWindow):
         elif key == "short":
             # Quickest to finish first; unknown length last.
             items.sort(key=lambda i: (i.total_hours is None, i.total_hours or 0, i.title.lower()))
+        elif key == "launched":
+            # Last started from here or played on Steam, newest first ("" = never: last).
+            items.sort(key=lambda i: max(i.last_launched or "", (i.last_played or "")[:19]),
+                       reverse=True)
         elif key == "played":
             items.sort(key=played_order)
         elif key == "recent":
@@ -722,7 +826,11 @@ class MainWindow(QMainWindow):
             menu.exec(self.grid.viewport().mapToGlobal(pos))
             return
         if len(ids) == 1:
+            if items[0].category == "game":
+                menu.addAction("▶  Play" if items[0].install_state != install.INSTALLER
+                               else "▶  Run setup", lambda: self.play(ids[0]))
             menu.addAction("Open details", lambda: self.show_item(ids[0]))
+            menu.addAction("Find match…", lambda: self.find_match(ids[0]))
             menu.addAction("Open folder" if items[0].source == "disk" else "Open web page",
                            lambda: self.open_item(ids[0]))
             menu.addSeparator()

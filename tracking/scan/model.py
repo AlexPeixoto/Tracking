@@ -38,6 +38,8 @@ class FoundItem:
     season: int | None = None
     reason: str = ""
     series_key: str | None = None  # merge key for episodes found in several places
+    install_state: str | None = None  # games: 'installed' | 'installer' | 'image' (scan/install.py)
+    launch_path: str | None = None    # games: volume-relative file Play starts
 
 
 @dataclass

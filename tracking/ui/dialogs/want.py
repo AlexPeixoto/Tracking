@@ -27,14 +27,16 @@ class _Signals(QObject):
 
 
 class _Search(QRunnable):
-    def __init__(self, number: int, query: providers.Query):
+    """A search off the UI thread; ``search(query)`` returns (service label, candidates)."""
+
+    def __init__(self, number: int, query: providers.Query, search=providers.search):
         super().__init__()
-        self.number, self.query = number, query
+        self.number, self.query, self.search = number, query, search
         self.signals = _Signals()
 
     def run(self) -> None:
         try:
-            source, found = providers.search(self.query)
+            source, found = self.search(self.query)
         except Exception as e:
             self.signals.failed.emit(self.number, str(e))
             return

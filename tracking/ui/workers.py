@@ -260,3 +260,34 @@ class CompletionCoversJob(Job):
             except Exception as e:
                 log.warning("cover for completed %r failed: %s", c.title, e)
         return f"Covers found for {found} of {len(todo)} completed entries"
+
+
+class LaunchJob(Job):
+    """Play: unpack a zipped image if the emulator needs it, then start the game. Runs
+    outside the job queue, so a long scan never delays it."""
+
+    def __init__(self, launch):
+        super().__init__()
+        self.launch = launch
+
+    def work(self, conn) -> str:
+        from .. import launcher
+
+        la = self.launch
+        try:
+            if la.unzip:
+                image = launcher.unzip_image(la.unzip, self.signals.progress.emit, self.cancelled)
+                la.command = [image if part == la.unzip else part.replace(la.unzip, image)
+                              for part in la.command]
+            self.signals.progress.emit(f"Starting {la.what}…")
+            launcher.start(la)
+        except launcher.LaunchError as e:
+            self.signals.warning.emit(str(e))
+            return f"Couldn't start {la.what}"
+        except OSError as e:
+            self.signals.warning.emit(f"Couldn't start {la.what}: {e}")
+            return f"Couldn't start {la.what}"
+        launcher.record(conn, la.item_id)
+        conn.commit()
+        self.signals.item_changed.emit(la.item_id)
+        return f"Started {la.what}"

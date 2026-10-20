@@ -1,11 +1,15 @@
-"""Full-page view of one item: completion, scores, play time, summary, edits."""
+"""Full-page view of one item: play, completion, scores, play time, summary, edits."""
 
 from __future__ import annotations
+
+import os
+from dataclasses import replace
 
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
+    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
+    QGridLayout, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -68,6 +72,8 @@ class ItemPage(QScrollArea):
     refetch = Signal(int)            # fetch metadata again
     open_folder = Signal(int)
     deleted = Signal(int)
+    play = Signal(int)
+    find_match = Signal(int)         # search services by hand
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -102,10 +108,13 @@ class ItemPage(QScrollArea):
         self.open_btn.clicked.connect(lambda: self.open_folder.emit(self.item.id))
         refetch = QPushButton("Refetch metadata")
         refetch.clicked.connect(lambda: self.refetch.emit(self.item.id))
+        match = QPushButton("Find match…")
+        match.setToolTip("Wrong cover / scores, or nothing found? Search with any name and pick")
+        match.clicked.connect(lambda: self.find_match.emit(self.item.id))
         delete = QPushButton("Remove from library")
         self.delete_btn = delete
         delete.clicked.connect(self._delete)
-        for b in (self.open_btn, refetch, delete):
+        for b in (self.open_btn, refetch, match, delete):
             left.addWidget(b)
         self.location = QLabel()
         self.location.setObjectName("Muted")
@@ -131,6 +140,16 @@ class ItemPage(QScrollArea):
         right.addWidget(self.subtitle)
 
         done_row = QHBoxLayout()
+        self.play_btn = QPushButton("▶  Play")
+        self.play_btn.setObjectName("Primary")
+        self.play_btn.setToolTip("Start the game (Ctrl+Enter in the grid)")
+        self.play_btn.clicked.connect(lambda: self.play.emit(self.item.id))
+        self.launch_btn = QPushButton("Launch options…")
+        self.launch_btn.setToolTip("Pick which file Play starts, and extra arguments")
+        self.launch_btn.clicked.connect(self._launch_options)
+        done_row.addWidget(self.play_btn)
+        done_row.addWidget(self.launch_btn)
+        done_row.addSpacing(12)
         self.done_btn = QPushButton()
         self.done_btn.setCheckable(True)
         self.done_btn.setObjectName("Done")
@@ -141,6 +160,9 @@ class ItemPage(QScrollArea):
         done_row.addWidget(self.done_when)
         done_row.addStretch(1)
         right.addLayout(done_row)
+        self.play_info = QLabel()
+        self.play_info.setObjectName("Muted")
+        right.addWidget(self.play_info)
 
         right.addWidget(_section("Scores"))
         self.scores = QGridLayout()  # wraps after SCORES_PER_ROW chips
@@ -225,6 +247,7 @@ class ItemPage(QScrollArea):
 
     def show_item(self, item: db.Item, mount: str | None, drive_label: str) -> None:
         self.item = item
+        self.mount = mount
         with db.session() as conn:
             scores = db.get_scores(conn, item.id)
 
@@ -248,6 +271,7 @@ class ItemPage(QScrollArea):
         self.subtitle.setOpenExternalLinks(True)
 
         self._set_done(item.completed, item.completed_at)
+        self._show_launch(item, mount)
 
         while self.scores.count():
             w = self.scores.takeAt(0).widget()
@@ -390,6 +414,44 @@ class ItemPage(QScrollArea):
         if url:
             QDesktopServices.openUrl(QUrl(url))
 
+    def _show_launch(self, item: db.Item, mount: str | None) -> None:
+        """Play / Run setup, what it starts, and when you last played."""
+        from .. import launcher
+        from ..scan import install
+
+        game = item.category == "game" and item.source != db.WANTED
+        self.play_btn.setVisible(game)
+        self.launch_btn.setVisible(game and item.source != db.STEAM)
+        self.play_info.setVisible(game)
+        if not game:
+            return
+        setup = item.install_state == install.INSTALLER
+        self.play_btn.setText("▶  Run setup" if setup else "▶  Play")
+        target = launcher.target_path(item, mount) if item.launch_path else None
+        can = bool(item.steam_appid) or (bool(item.launch_path) and (mount is not None
+                                                                     or bool(target)))
+        self.play_btn.setEnabled(can and not item.missing)
+        bits = []
+        if item.install_state:
+            bits.append(install.STATES.get(item.install_state, item.install_state))
+        if item.launch_path and item.source != db.STEAM:
+            bits.append(f"starts {item.launch_path.rsplit('/', 1)[-1]}")
+        elif item.steam_appid:
+            bits.append("starts in Steam")
+        if item.last_launched:
+            n = item.launch_count
+            bits.append(f"last played {item.last_launched[:10]}" + (f" · {n} times" if n > 1 else ""))
+        if not item.launch_path and not item.steam_appid:
+            bits.append("nothing to start found: Launch options › Choose file")
+        elif not mount and not item.steam_appid:
+            bits.append("drive not connected")
+        self.play_info.setText("  ·  ".join(bits))
+
+    def _launch_options(self) -> None:
+        dlg = LaunchOptionsDialog(self.item, getattr(self, "mount", None), self)
+        if dlg.exec() == QDialog.Accepted:
+            self.changed.emit(self.item.id)
+
     def _set_done(self, done: bool, when: str | None) -> None:
         if self.item and self.item.source == db.WANTED:
             self.done_btn.setChecked(False)
@@ -434,3 +496,75 @@ class ItemPage(QScrollArea):
         with db.session() as conn:
             library.remove_items(conn, [self.item.id])
         self.deleted.emit(self.item.id)
+
+
+class LaunchOptionsDialog(QDialog):
+    """Which file Play starts (detected, or one you pick) and extra arguments."""
+
+    def __init__(self, item: db.Item, mount: str | None, parent=None):
+        from .. import launcher
+
+        super().__init__(parent)
+        self.setWindowTitle(f"Launch options · {item.title}")
+        self.setMinimumWidth(560)
+        self.item, self.mount = item, mount
+        form = QFormLayout(self)
+        self.path = QLineEdit(launcher.target_path(item, mount) or item.launch_path or "")
+        browse = QPushButton("Choose file…")
+        browse.clicked.connect(self._browse)
+        reset = QPushButton("Use detected")
+        reset.setToolTip("Go back to the file the scan picked")
+        reset.clicked.connect(self._reset)
+        row = QHBoxLayout()
+        row.addWidget(self.path, 1)
+        row.addWidget(browse)
+        row.addWidget(reset)
+        self.args = QLineEdit(item.launch_args or "")
+        self.args.setPlaceholderText("e.g. -windowed -skipintro")
+        form.addRow("Start", row)
+        form.addRow("Extra arguments", self.args)
+        hint = QLabel("PC games start this file in its own folder. Console games pass it to the "
+                      "emulator from Settings › Emulators.")
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
+        form.addRow("", hint)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self._reset_to_detected = False
+
+    def _browse(self) -> None:
+        start = self.path.text() or (self.mount or "")
+        path, _ = QFileDialog.getOpenFileName(self, "What should Play start?", start,
+                                              "Games (*.exe *.bat *.lnk *.iso *.chd *.cue *.zip "
+                                              "*.nsp *.xci *.rvz *.wbfs *.cso *.pbp *.bin);;All files (*)")
+        if path:
+            self.path.setText(os.path.normpath(path))
+            self._reset_to_detected = False
+
+    def _reset(self) -> None:
+        self._reset_to_detected = True
+        with db.session() as conn:
+            r = conn.execute("SELECT launch_path FROM items WHERE id=?", (self.item.id,)).fetchone()
+        from .. import launcher
+
+        detected = r["launch_path"] if r else None
+        self.path.setText(launcher.target_path(
+            replace(self.item, launch_path=detected), self.mount) or detected or "")
+
+    def _save(self) -> None:
+        from .. import launcher
+
+        text = self.path.text().strip() or None
+        current = launcher.target_path(self.item, self.mount)
+        with db.session() as conn:
+            if self._reset_to_detected or not text:
+                launcher.set_launch(conn, self.item.id, None, self.args.text())
+            elif current and os.path.normcase(text) == os.path.normcase(current):
+                # Unchanged file: only the arguments change (your earlier pick stays).
+                conn.execute("UPDATE items SET launch_args=? WHERE id=?",
+                             (self.args.text().strip() or None, self.item.id))
+            else:
+                launcher.set_launch(conn, self.item.id, text, self.args.text())
+        self.accept()

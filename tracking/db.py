@@ -162,6 +162,12 @@ MIGRATIONS = [
     ("items", "steam_appid", "INTEGER"),
     ("items", "playtime_min", "REAL"),
     ("items", "last_played", "TEXT"),
+    ("items", "install_state", "TEXT"),     # games: installed / installer / image
+    ("items", "launch_path", "TEXT"),       # volume-relative file Play starts (detected)
+    ("items", "user_launch", "TEXT"),       # your choice instead (path; absolute if elsewhere)
+    ("items", "launch_args", "TEXT"),       # extra command-line arguments
+    ("items", "last_launched", "TEXT"),     # last time Play started it
+    ("items", "launch_count", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -276,6 +282,11 @@ class Item:
     detected_title: str
     video_count: int
     scores: list["Score"] = field(default_factory=list)  # every site's score, best-known first
+    install_state: str | None = None
+    launch_path: str | None = None       # what Play starts: your choice, else the detected one
+    launch_args: str | None = None
+    last_launched: str | None = None
+    launch_count: int = 0
 
     @property
     def avg_score(self) -> float | None:
@@ -303,6 +314,8 @@ SELECT id, volume_uid, rel_path, is_dir,
        year, file_count, size_bytes, duration_sec, hltb_hours, hltb_extra, hltb_complete,
        completed, completed_at, notes, kind, season, detected_how,
        source, steam_appid, playtime_min, last_played,
+       install_state, COALESCE(user_launch, launch_path) AS launch_path, launch_args,
+       last_launched, launch_count,
        rating, rating_max, rating_source, external_url, poster, summary, missing,
        (SELECT COUNT(*) FROM media_files m WHERE m.item_id = items.id) AS video_count
 FROM items
@@ -335,6 +348,11 @@ def row_to_item(row: sqlite3.Row) -> Item:
         steam_appid=row["steam_appid"],
         playtime_min=row["playtime_min"],
         last_played=row["last_played"],
+        install_state=row["install_state"],
+        launch_path=row["launch_path"],
+        launch_args=row["launch_args"],
+        last_launched=row["last_launched"],
+        launch_count=row["launch_count"] or 0,
         rating=row["rating"],
         rating_max=row["rating_max"],
         rating_source=row["rating_source"],

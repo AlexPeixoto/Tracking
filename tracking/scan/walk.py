@@ -16,7 +16,7 @@ import os
 from typing import Callable, Iterator
 
 from .. import titles
-from . import classify, discid
+from . import classify, discid, install
 from .classify import ARCHIVE_EXT, DISC_EXT, ROM_EXT, VIDEO_EXT, Hints
 from .model import GROUP_SEP, FileEntry, FoundItem, vol_rel
 from .videos import (
@@ -109,6 +109,10 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
                                             [p for _, p in pairs], addon)
         item = FoundItem(dir_rel, True, "game", platform, title, None,
                          [], count, total, kind="addon" if addon else None, reason=reason)
+        if not addon:
+            state, target = install.detect(_launch_candidates(pairs), platform, title)
+            item.install_state = state
+            item.launch_path = vol_rel(dir_rel, target) if target else None
         log.debug("game %r [%s] <- %s (%s)", item.title, d.platform or "?", dir_rel, d.reason)
         return [item] + extra
 
@@ -180,6 +184,19 @@ def _ask_disc(platform: str | None, title: str, reason: str, paths: list[str],
         platform = platform or info.platform
         return platform, title, f"{reason}; {info.describe()}"
     return platform, title, reason
+
+
+_LAUNCHABLE = (".exe",) + tuple(classify.ROM_EXT) + tuple(classify.DISC_EXT) + tuple(classify.ARCHIVE_EXT)
+
+
+def _launch_candidates(pairs: list[tuple[str, str]]) -> list[tuple[str, int]]:
+    """(inner path, size) of the files that could be what Play starts (exes, ROMs, discs);
+    PS3 folders also need EBOOT.BIN."""
+    out = []
+    for inner, path in pairs:
+        if inner.lower().endswith(_LAUNCHABLE) or inner.upper().endswith("EBOOT.BIN"):
+            out.append((inner, _size(path)))
+    return out
 
 
 def _size(path: str) -> int:
@@ -265,9 +282,15 @@ def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iter
                                                 [m.path for m in members], only_addons)
         log.debug("%s%s %r [%s] <- %s (%s)", d.category, " add-on for" if only_addons else "", title,
                   platform or "?", vol_rel(dir_rel, first.name), reason)
-        yield FoundItem(vol_rel(dir_rel, first.name), False, d.category, platform, title, None,
-                        [], len(members), sum(stats[m.name].st_size for m in members),
-                        kind="addon" if only_addons else None, reason=reason)
+        found = FoundItem(vol_rel(dir_rel, first.name), False, d.category, platform, title, None,
+                          [], len(members), sum(stats[m.name].st_size for m in members),
+                          kind="addon" if only_addons else None, reason=reason)
+        if d.category == "game" and not only_addons:
+            state, target = install.detect([(m.name, stats[m.name].st_size) for m in members],
+                                           platform, title)
+            found.install_state = state
+            found.launch_path = vol_rel(dir_rel, target) if target else None
+        yield found
 
 
 def _has_keyword_child(dir_abs: str) -> bool:

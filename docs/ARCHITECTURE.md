@@ -16,6 +16,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `db.py` | Schema, migrations, `Item` / `Score` / `EpisodeRow` and the read queries |
 | `library.py` | Changes the *user* makes (edit, move, remove, complete). The UI calls these; it never writes SQL |
 | `archive.py` | Export / import of the library as a zip (replace or merge) |
+| `launcher.py` | Play: the command for an item (PC .exe, emulator + argument template, steam://), unzipping images to a cache, recording launches |
 | `completions.py` | The Completed log: one row per time you finished something (marking an item completed adds today; year CSVs `name, DD/MM/YYYY` and manual entries add rows outside the library, with their own cover). Editing, ordering, CSV import/export |
 | `volumes.py` | Drive identity: volume GUID + serial, UNC shares, Linux UUIDs; resolves where a drive is mounted now |
 | **Tables** | |
@@ -27,6 +28,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `scan/walk.py` | Walks a location: container rules, folder items, loose files |
 | `scan/classify.py` | Category / platform decisions: folder names, ROM extensions, disc headers, release tags, serials |
 | `scan/discid.py` | A disc's own identity, read like an emulator does (also inside .zip): SYSTEM.CNF serial for PS1/PS2 (named via PCSX2's GameIndex), PARAM.SFO for PSP/PS3, Wii/GameCube headers. Used only when the name or platform says too little |
+| `scan/install.py` | Installed / installer / ROM-disc, and which file Play starts (scored .exe candidates, preferred disc formats, PS3 EBOOT.BIN) |
 | `scan/videos.py` | Episodes vs movies, one group per series season, extras (NC / AMV / PV folders and files) skipped |
 | `scan/merge.py` | One item per series season, per game (updates/DLC folded in), per movie (copies folded in) |
 | `scan/store.py` | Saving: upsert, missing items, re-linking moved items, mark-missing-as-completed |
@@ -42,6 +44,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `ui/main_window.py` | Sidebar (library sections, Steam, Want to acquire), grid, job queue, toolbar |
 | `ui/grid.py` | Poster cards (score chips, average, badges) |
 | `ui/item_page.py` | Item page: completion, scores, time, episodes, summary, edits |
+| `ui/dialogs/match.py` | Find match: search every service (`providers.search_all`) and use a result as the item's search title (`library.use_match`) |
 | `ui/dialogs/health.py` | Library health: checks from `library.health()` (no cover / score / platform, duplicates, missing), each with Show / Fetch again |
 | `ui/completed_page.py` | Completed section: a year's covers (drag to reorder), add / edit / remove, CSV import / export |
 | `ui/year_image.py` | "Export year as image": the year's covers as one grid picture (columns, cover size / shape, gap, margin, background, heading, labels), drawn with Qt |

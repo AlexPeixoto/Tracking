@@ -1,4 +1,4 @@
-"""Settings: logging, data folder, export / import, and each service's keys."""
+"""Settings: logging, data folder, export / import, emulators, and each service's keys."""
 
 from __future__ import annotations
 
@@ -9,10 +9,11 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QGridLayout, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTabWidget,
+    QVBoxLayout, QWidget,
 )
 
-from ... import archive, categories, db, log, paths, providers
+from ... import archive, categories, db, launcher, log, paths, platforms, providers
 from .. import grid, workers
 
 LOG_LEVEL_HELP = {
@@ -96,6 +97,7 @@ class SettingsDialog(QDialog):
             note.setWordWrap(True)
             gform.addRow("", note)
             tabs.addTab(general, "General")
+            tabs.addTab(self._emulators_tab(conn), "Emulators")
             for cat in categories.CATEGORIES:
                 services = providers.for_category(cat.key)
                 if not services:
@@ -138,8 +140,63 @@ class SettingsDialog(QDialog):
             db.set_setting(conn, "log_level", self.level.currentData())
             db.set_setting(conn, "metadata_workers", str(self.workers.value()))
             db.set_setting(conn, "offline_style", self.offline_style.currentData())
+            for plat, (path, args, unzip) in self.emulators.items():
+                db.set_setting(conn, launcher.emulator_key(plat), path.text().strip())
+                db.set_setting(conn, launcher.emulator_args_key(plat), args.text().strip())
+                db.set_setting(conn, launcher.emulator_unzip_key(plat), "1" if unzip.isChecked() else "0")
         log.set_level(self.level.currentData())
         self.accept()
+
+    def _emulators_tab(self, conn) -> QWidget:
+        """One row per console: emulator, its arguments ({file} = the game), unzip first."""
+        in_library = {r["p"] for r in conn.execute(
+            "SELECT DISTINCT COALESCE(user_platform, platform) p FROM items WHERE category='game'")}
+        names = [p.name for p in platforms.PLATFORMS if p.name != "PC"
+                 and (p.name in in_library or p.name in launcher.SUGGESTED)]
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        intro = QLabel("Pick the emulator for each console, and Play starts games with it. "
+                       "<b>{file}</b> in the arguments is the game's ROM or disc. Zipped images "
+                       "are unpacked to a cache first when “Unzip” is ticked.")
+        intro.setWordWrap(True)
+        outer.addWidget(intro)
+        body = QWidget()
+        grid_ = QGridLayout(body)
+        grid_.setColumnStretch(1, 3)
+        grid_.setColumnStretch(3, 2)
+        for col, head in enumerate(("Platform", "Emulator (.exe)", "", "Arguments", "Unzip")):
+            h = QLabel(f"<b>{head}</b>")
+            grid_.addWidget(h, 0, col)
+        self.emulators = {}
+        for row, plat in enumerate(names, 1):
+            label = QLabel(plat + ("  ·" if plat in in_library else ""))
+            label.setToolTip("In your library" if plat in in_library else "")
+            path = QLineEdit(db.get_setting(conn, launcher.emulator_key(plat)))
+            path.setPlaceholderText(launcher.SUGGESTED.get(plat, ""))
+            browse = QPushButton("Browse…")
+            browse.clicked.connect(lambda _=False, e=path, p=plat: self._pick_emulator(e, p))
+            args = QLineEdit(db.get_setting(conn, launcher.emulator_args_key(plat)))
+            args.setPlaceholderText(launcher.DEFAULT_ARGS.get(plat, '"{file}"'))
+            unzip = QCheckBox()
+            unzip.setChecked(db.get_setting(conn, launcher.emulator_unzip_key(plat), "1") == "1")
+            for col, w in enumerate((label, path, browse, args, unzip)):
+                grid_.addWidget(w, row, col)
+            self.emulators[plat] = (path, args, unzip)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
+        note = QLabel("· = you have games for it. Empty arguments use the usual ones for that "
+                      "emulator (shown greyed).")
+        note.setObjectName("Muted")
+        outer.addWidget(note)
+        return page
+
+    def _pick_emulator(self, edit: QLineEdit, platform: str) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, f"Emulator for {platform}", edit.text(),
+                                              "Programs (*.exe);;All files (*)")
+        if path:
+            edit.setText(os.path.normpath(path))
 
     def _export(self):
         box = QMessageBox(self)

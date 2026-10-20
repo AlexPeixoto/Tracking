@@ -195,20 +195,24 @@ def _upsert(conn: sqlite3.Connection, root_id: int, volume_uid: str, f: FoundIte
             conn.execute("DELETE FROM scores WHERE item_id=?", (item_id,))
             conn.execute("DELETE FROM episodes WHERE item_id=?", (item_id,))
         conn.execute(
-            "UPDATE items SET root_id=?, is_dir=?, category=?, platform=?, title=?, year=?, "
-            "file_count=?, size_bytes=?, kind=?, season=?, detected_how=?, missing=0, scanned_at=? "
-            "WHERE id=?",
+            # year: keep the one a lookup found when the name has none (games rarely do)
+            "UPDATE items SET root_id=?, is_dir=?, category=?, platform=?, title=?, "
+            "year=COALESCE(?, year), "
+            "file_count=?, size_bytes=?, kind=?, season=?, detected_how=?, missing=0, scanned_at=?, "
+            "install_state=?, launch_path=? WHERE id=?",
             (root_id, f.is_dir, f.category, f.platform, f.title, f.year,
-             f.file_count, f.size_bytes, f.kind, f.season, f.reason, now, item_id),
+             f.file_count, f.size_bytes, f.kind, f.season, f.reason, now,
+             f.install_state, f.launch_path, item_id),
         )
         is_new = 0
     else:
         item_id = conn.execute(
             "INSERT INTO items(root_id, volume_uid, rel_path, is_dir, category, platform, title, "
-            "year, file_count, size_bytes, kind, season, detected_how, scanned_at, added_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "year, file_count, size_bytes, kind, season, detected_how, scanned_at, added_at, "
+            "install_state, launch_path) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (root_id, volume_uid, f.rel_path, f.is_dir, f.category, f.platform, f.title,
-             f.year, f.file_count, f.size_bytes, f.kind, f.season, f.reason, now, now),
+             f.year, f.file_count, f.size_bytes, f.kind, f.season, f.reason, now, now,
+             f.install_state, f.launch_path),
         ).lastrowid
         is_new = 1
 

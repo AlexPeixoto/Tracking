@@ -224,30 +224,53 @@ def year_of(date: str | None) -> int | None:
 
 
 _NUMBER = re.compile(r"(?<![\d.])(\d{1,3})(?:st|nd|rd|th)?\b", re.I)
+# Sequel numerals as words. "I" and "X" stay words ("Mega Man X" isn't "Mega Man 10").
+_ROMAN = {"ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8",
+          "ix": "9", "xi": "11", "xii": "12", "xiii": "13", "xiv": "14", "xv": "15", "xvi": "16"}
+
+
+def _words(s: str) -> list[str]:
+    """Lowercase words with "&" as "and" and Roman sequel numerals as digits."""
+    return [_ROMAN.get(w, w) for w in re.findall(r"[a-z0-9]+", s.lower().replace("&", " and "))]
 
 
 def _numbers(s: str) -> set[str]:
-    """Sequel / season numbers in a title. "1" counts as no number (season 1 is implied)."""
-    return {n.lstrip("0") for n in _NUMBER.findall(s)} - {"1", ""}
+    """Sequel / season numbers in a title ("II" counts as 2). "1" counts as no number
+    (season 1 is implied)."""
+    found = {n.lstrip("0") for n in _NUMBER.findall(s)}
+    found |= {_ROMAN[w] for w in re.findall(r"[a-z]+", s.lower()) if w in _ROMAN}
+    return found - {"1", ""}
+
+
+def _in_order(short: list[str], long_: list[str]) -> bool:
+    """Every word of ``short`` appears in ``long_``, in the same order."""
+    it = iter(long_)
+    return all(w in it for w in short)
 
 
 def similarity(a: str, b: str) -> float:
     """0-100 title similarity, tolerant of punctuation and word order.
 
     Titles whose numbers disagree ("1st GIG" vs "2nd GIG", "Okami" vs "Okami 2")
-    are pushed below the match threshold.
+    are pushed below the match threshold; "2" and "II" agree.
     """
     na, nb = titles.normalize(a.replace("&", " and ")), titles.normalize(b.replace("&", " and "))
     if na and na == nb:
         return 100.0
-    score = max(fuzz.ratio(na, nb), fuzz.token_sort_ratio(a.lower(), b.lower()))
+    wa, wb = _words(a), _words(b)
+    if wa and wa == wb:
+        return 100.0
+    score = max(fuzz.ratio(na, nb), fuzz.token_sort_ratio(" ".join(wa), " ".join(wb)))
+    short, long_ = sorted((wa, wb), key=len)
     # "Monochrome Mobius" vs "Monochrome Mobius: Rights and Wrongs Forgotten": release
     # names often drop the subtitle the store keeps (and the other way round).
-    wa, wb = (re.findall(r"[a-z0-9]+", s.lower().replace("&", " and ")) for s in (a, b))
-    short, long_ = sorted((wa, wb), key=len)
     if (len("".join(short)) >= 10 and long_[:len(short)] == short and len(long_) > len(short)
             and not re.fullmatch(r"\d+|[ivx]+", long_[len(short)])):  # "Final Fantasy" != "... XV"
         score = max(score, 82.0)
+    # "Fatal Frame 2 Remake" vs "FATAL FRAME II: Crimson Butterfly REMAKE": the subtitle
+    # sits in the middle. All our words, in order, with the same numbers: a match.
+    elif len(short) >= 3 and len("".join(short)) >= 12 and _in_order(short, long_):
+        score = max(score, 80.0)
     if _numbers(a) != _numbers(b):
         score -= 25
     return score
@@ -287,4 +310,18 @@ def search_variants(title: str) -> list[str]:
     lead = re.match(rf"^{_ABBR}\s+-\s+(.+)$", title)
     if lead:
         add(lead.group(1))
+    # "Fatal Frame 2 Remake" <-> "Fatal Frame II Remake": store searches are literal.
+    # Not "Season 2" / "Part 2" / "Vol. 2": those are written in digits everywhere.
+    not_sequel = re.compile(r"(?i)(?:season|part|vol\.?|volume|episode|ep\.?|chapter|s)\s*$")
+
+    def roman(m: re.Match) -> str:
+        return m.group(1) if not_sequel.search(m.string[:m.start()]) else _TO_ROMAN[m.group(1)]
+
+    for v in list(out):
+        add(re.sub(r"(?<![\d.])([2-9]|1[0-6])(?![\d.])", roman, v))
+        add(re.sub(r"\b(II|III|IV|V|VI|VII|VIII|IX|XI|XII|XIII|XIV|XV|XVI)\b",
+                   lambda m: _ROMAN[m.group(1).lower()], v))
     return out
+
+
+_TO_ROMAN = {d: r.upper() for r, d in _ROMAN.items()}

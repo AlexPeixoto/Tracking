@@ -4,8 +4,9 @@ library health."""
 from .health import HealthDialog
 from .locations import AddLocationDialog, AddSteamDialog, LocationsDialog, RescanDialog
 from .log_viewer import LogDialog
+from .match import MatchDialog
 from .settings import SettingsDialog
 from .want import WantDialog
 
 __all__ = ["AddLocationDialog", "AddSteamDialog", "HealthDialog", "LocationsDialog", "LogDialog",
-           "RescanDialog", "SettingsDialog", "WantDialog"]
+           "MatchDialog", "RescanDialog", "SettingsDialog", "WantDialog"]

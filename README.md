@@ -37,7 +37,12 @@ remembers what you've finished, even when the drive is unplugged.
   possible duplicates and missing files, each one click away from a fix.
 - 🛒 **Want to acquire**: search any service and keep a wish list; it moves into your
   library by itself when a scan finds it.
+- ▶️ **Play from the library**: PC games start their own .exe, console games open in the
+  emulator you pick per platform (zipped discs are unpacked for you), Steam games in Steam.
+  Filter games by *Installed*, *Installer* or *ROM / disc*, and sort by *Recently played*.
 - 🎮 **Steam accounts**: your owned games with **time played**, in their own section.
+- 🔎 **Find match**: if something found the wrong thing (or nothing), search every service
+  with any name and pick the right result.
 - 💽 **Reads game discs like an emulator**: PS1/PS2 serials (named via PCSX2's database),
   PSP/PS3 `PARAM.SFO`, Wii/GameCube headers, even inside `.zip` files.
 - 🔌 **Drives are tracked by id, not letter**: unplug a disk and its items stay, dimmed;
@@ -104,6 +109,9 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 | **Right-click** | Move to another section / platform, complete, refetch, remove |
 | **Export list…** | A spreadsheet of the items missing a cover or scores, or of what's shown |
 | **Library health…** (Ctrl+H) | What needs a look, with *Show* and *Fetch again* |
+| **▶ Play** | On a game's page or right-click (Ctrl+Enter in the grid). Emulators: Settings › Emulators |
+| **Find match…** | On an item's page or right-click: search by hand and pick the right result |
+| **Hide offline** | Hide what's on unplugged drives; drives are re-checked every 25 s |
 
 <details>
 <summary>Keyboard</summary>
@@ -112,6 +120,7 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 |---|---|
 | Arrows · Enter | Move around the grid · open an item |
 | Space | Mark the selected items completed (again: not completed) |
+| Ctrl+Enter | Play the selected game |
 | Ctrl+A | Select everything shown |
 | Ctrl+F · Esc | Search · clear the search |
 | Esc · Alt+← | Back from an item page |
@@ -238,6 +247,13 @@ logs\             tracking.log (level in Settings › General)
 - **Export / import** (Settings › General): one `.zip`, database only or with covers; API keys
   are left out unless you ask. Import replaces your library or merges into it (your edits win).
 - A `cover.jpg` / `folder.jpg` / `poster.jpg` in an item's folder is used as its cover.
+
+## What's next
+
+Tracking is heading towards being **the launcher for everything outside Steam**: telling
+installed games from installers, launching PC games and emulators, playing episodes with
+"continue watching", moving games between drives while the library follows, and more. See
+the [wishlist](docs/WISHLIST.md).
 
 ## For developers
 
