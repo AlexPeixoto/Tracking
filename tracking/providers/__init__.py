@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from . import (
     anidb, anilist, hltb, igdb, kitsu, libretro, mal, omdb, opencritic, rawg, steam, tmdb, trakt,
-    tvmaze,
+    tvmaze, wikidata,
 )
 from .base import Candidate, Episode, Metadata, Provider, ProviderError, Query, ScoreEntry, Setting
 
 REGISTRY: list[Provider] = [m.PROVIDER for m in (
     anidb, omdb, rawg, tmdb, igdb, anilist, tvmaze, hltb, libretro, mal, kitsu, opencritic, trakt,
-    steam,
+    steam, wikidata,
 )]
 
 

@@ -184,9 +184,9 @@ Works out of the box. Free keys (Settings, one tab per section) add more scores.
 | | No key needed | With a free key |
 |---|---|---|
 | **Anime** | AniList, Kitsu, MyAnimeList (Jikan): scores, covers, episodes | AniDB, Trakt |
-| **Movies** | IMDb posters and links | OMDb (IMDb, Rotten Tomatoes, Metacritic), TMDB, Trakt |
+| **Movies** | IMDb posters and links; Rotten Tomatoes + Metacritic via Wikidata | OMDb (IMDb score, and the rest), TMDB, Trakt |
 | **TV** | TVmaze ratings, posters, episodes; IMDb | OMDb, TMDB, Trakt |
-| **Games** | HowLongToBeat (times, covers, user score), Steam reviews + Metacritic | RAWG, IGDB, OpenCritic, Steam Web API (your account) |
+| **Games** | HowLongToBeat (times, covers, user score), Steam reviews + Metacritic, libretro box art for consoles | RAWG, IGDB, OpenCritic, Steam Web API (your account) |
 
 <details>
 <summary>Where to get the keys</summary>

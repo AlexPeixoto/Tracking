@@ -40,7 +40,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `enrich.py` | Runs the registered services for an item, merges results, saves scores / cover / episodes |
 | `providers/__init__.py` | The registry: which services exist and their priority |
 | `providers/base.py` | `Query`, `Provider`, `Metadata`, `Episode`, HTTP session, cache, rate limiter, fuzzy matching |
-| `providers/<service>.py` | One module per service (anidb, mal, anilist, kitsu, omdb, tmdb, tvmaze, trakt, rawg, igdb, hltb, libretro, opencritic, steam) |
+| `providers/<service>.py` | One module per service (anidb, mal, anilist, kitsu, omdb, tmdb, tvmaze, trakt, rawg, igdb, hltb, libretro, opencritic, steam, wikidata) |
 | **UI** `ui/` | |
 | `ui/main_window.py` | Sidebar (library sections, Steam, Want to acquire), grid, job queue, toolbar |
 | `ui/grid.py` | Poster cards (score chips, average, badges) |

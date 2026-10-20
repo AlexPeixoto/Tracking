@@ -221,8 +221,11 @@ def parse_video(name: str) -> VideoInfo:
             # "Vampire Hunter D - Bloodlust": guessit splits the subtitle off movies.
             if not is_series and isinstance(alt, str) and re.search(r"[A-Za-z]{3}", alt) and len(alt) < 50:
                 title = f"{title}: {alt}"
-            for abbr in _DOTTED.findall(name):  # guessit turns "A.D.P" into "A D P"
-                title = title.replace(" ".join(re.findall(r"[A-Za-z]", abbr)), abbr.rstrip("."), 1)
+            for abbr in _DOTTED.findall(name):  # guessit turns "A.D.P" / "B.C." into "A D P" / "B C"
+                spaced = " ".join(re.findall(r"[A-Za-z]", abbr))
+                # "B.C. 2033" keeps its last dot inside a title; at the very end it's dropped.
+                keep = abbr if title.find(spaced) + len(spaced) < len(title) else abbr.rstrip(".")
+                title = title.replace(spaced, keep, 1)
             year = _as_int(g.get("year"))
             glued = _number_in_title(name, title)
             if glued:

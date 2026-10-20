@@ -311,6 +311,15 @@ def search_variants(title: str) -> list[str]:
     if lead:
         add(lead.group(1))
     # "Fatal Frame 2 Remake" <-> "Fatal Frame II Remake": store searches are literal.
+    # Repack shorthand: "MSG SEED ..." -> "Mobile Suit Gundam SEED ...", "25th AR" -> "25th
+    # Anniversary Remaster". Tried as well as (not instead of) the name as written.
+    expanded = title
+    for short, full in _ABBREVIATIONS.items():
+        expanded = re.sub(rf"(?<![\w-]){re.escape(short)}(?![\w-])", full, expanded)
+    if expanded != title:
+        add(expanded)
+        if " - " in expanded:
+            add(expanded.replace(" - ", ": "))
     # Not "Season 2" / "Part 2" / "Vol. 2": those are written in digits everywhere.
     not_sequel = re.compile(r"(?i)(?:season|part|vol\.?|volume|episode|ep\.?|chapter|s)\s*$")
 
@@ -321,7 +330,16 @@ def search_variants(title: str) -> list[str]:
         add(re.sub(r"(?<![\d.])([2-9]|1[0-6])(?![\d.])", roman, v))
         add(re.sub(r"\b(II|III|IV|V|VI|VII|VIII|IX|XI|XII|XIII|XIV|XV|XVI)\b",
                    lambda m: _ROMAN[m.group(1).lower()], v))
-    return out
+    return out[:8]  # each one can cost a lookup per service
 
 
 _TO_ROMAN = {d: r.upper() for r, d in _ROMAN.items()}
+
+# Shorthand that repack / release names use for long titles (case-sensitive, whole words).
+_ABBREVIATIONS = {
+    "FF-PZ": "Fatal Frame", "MSG": "Mobile Suit Gundam", "LDA": "Last Defense Academy",
+    "MDA": "Master Detective Archives", "DoA": "Dead or Alive", "AR": "Anniversary Remaster",
+    "KH": "Kingdom Hearts", "SMT": "Shin Megami Tensei", "DQ": "Dragon Quest",
+    "MGS": "Metal Gear Solid", "TLoH": "The Legend of Heroes", "DE": "Definitive Edition",
+    "GOTY": "Game of the Year Edition", "CE": "Complete Edition",
+}

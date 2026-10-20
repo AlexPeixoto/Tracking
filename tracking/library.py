@@ -191,7 +191,7 @@ def health(items: list[db.Item], copies: dict[int, int] | None = None) -> list[H
                     "that stays empty, use Find match… on its page.",
                     [i.id for i in present if not i.poster], fetch=True),
         HealthCheck("no_score", "No score from any site",
-                    "Movies need an OMDb or TMDB key, retro games an IGDB key.",
+                    "Lesser-known movies need an OMDb or TMDB key, retro games an IGDB key.",
                     [i.id for i in present if not i.scores], fetch=True),
         HealthCheck("no_platform", "Games without a platform",
                     "Right-click › Move to › Games › a platform.",

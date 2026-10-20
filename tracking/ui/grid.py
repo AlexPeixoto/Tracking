@@ -234,10 +234,17 @@ class CardDelegate(QStyledItemDelegate):
             y += fm.height()
 
         meta = [fmt_hours(item.total_hours, item.category)]
-        if item.playtime_min is not None:
-            meta.append(f"{fmt_played(item.playtime_min)} played")  # Steam: replaces "PC"
-        elif item.category == "game" and item.platform:
-            meta.insert(0, item.platform)
+        if item.category == "game":
+            # "PS2", "PC · installer", plus time played (Steam, or games started from here)
+            where = item.platform or ""
+            if item.install_state == "installer":
+                where = f"{where} · installer".strip(" ·")
+            if item.playtime_min:
+                meta.append(f"{fmt_played(item.playtime_min)} played")
+            if where and item.source != "steam":
+                meta.insert(0, where)
+        elif item.playtime_min is not None:
+            meta.append(f"{fmt_played(item.playtime_min)} played")
         elif item.kind == "movie" and item.category in ("anime", "unknown"):
             meta.insert(0, "Movie")
         elif item.video_count > 1:
