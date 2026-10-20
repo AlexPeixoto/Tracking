@@ -12,7 +12,15 @@ from __future__ import annotations
 import re
 
 from .base import (
-    Candidate, Metadata, Provider, Query, RateLimiter, ScoreEntry, Setting, best_match, cached_json,
+    Candidate,
+    Metadata,
+    Provider,
+    Query,
+    RateLimiter,
+    ScoreEntry,
+    Setting,
+    best_match,
+    cached_json,
     session,
 )
 

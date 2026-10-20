@@ -5,9 +5,17 @@ from __future__ import annotations
 import re
 
 from .base import (
-    Candidate, Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, best_match,
+    Candidate,
+    Metadata,
+    Provider,
+    ProviderError,
+    Query,
+    RateLimiter,
+    ScoreEntry,
+    best_match,
     cached_json,
-    media_format_bonus, session,
+    media_format_bonus,
+    session,
 )
 
 API_URL = "https://graphql.anilist.co"

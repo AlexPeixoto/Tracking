@@ -4,7 +4,15 @@
 from __future__ import annotations
 
 from .base import (
-    Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, Setting, best_match, cached_json,
+    Metadata,
+    Provider,
+    ProviderError,
+    Query,
+    RateLimiter,
+    ScoreEntry,
+    Setting,
+    best_match,
+    cached_json,
     session,
 )
 

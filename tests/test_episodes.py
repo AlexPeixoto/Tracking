@@ -31,7 +31,7 @@ def test_tvmaze_episodes_for_the_items_season(monkeypatch):
 
 
 def test_mal_episodes_follow_pages(monkeypatch):
-    page = lambda n, more, eps: {"data": eps, "pagination": {"has_next_page": more}}  # noqa: E731
+    page = lambda n, more, eps: {"data": eps, "pagination": {"has_next_page": more}}
     monkeypatch.setattr(mal, "cached_json", fake_cache({
         "episodes-5-1": page(1, True, [{"mal_id": 1, "title": "A", "score": 4.5, "aired": "2013-10-04T00:00:00"}]),
         "episodes-5-2": page(2, False, [{"mal_id": 2, "title": "B", "score": None, "filler": True}]),

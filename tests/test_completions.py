@@ -116,7 +116,7 @@ def test_year_image_layout_and_render(tmp_path, monkeypatch, conn):
     assert (img.width(), img.height()) == (w, h)
     assert img.pixelColor(0, 0).alpha() == 0          # transparent background
     opts.heading, opts.labels, opts.columns = True, "both", 5
-    w2, h2, cols2, rows2, label_h, heading_h = year_image.layout(len(entries), opts)
+    _, _, cols2, rows2, label_h, heading_h = year_image.layout(len(entries), opts)
     assert (cols2, rows2) == (5, 2) and label_h > 0 and heading_h > 0
 
 

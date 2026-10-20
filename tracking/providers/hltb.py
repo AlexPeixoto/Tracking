@@ -6,7 +6,15 @@ from __future__ import annotations
 
 from .. import platforms
 from .base import (
-    Candidate, Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, best_match, cached_json,
+    Candidate,
+    Metadata,
+    Provider,
+    ProviderError,
+    Query,
+    RateLimiter,
+    ScoreEntry,
+    best_match,
+    cached_json,
     platform_matches,
 )
 

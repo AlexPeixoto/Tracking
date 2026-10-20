@@ -5,8 +5,17 @@ from __future__ import annotations
 import re
 
 from .base import (
-    Candidate, Episode, Metadata, Provider, Query, RateLimiter, ScoreEntry, best_match, cached_json,
-    session, year_of,
+    Candidate,
+    Episode,
+    Metadata,
+    Provider,
+    Query,
+    RateLimiter,
+    ScoreEntry,
+    best_match,
+    cached_json,
+    session,
+    year_of,
 )
 
 SEARCH_URL = "https://api.tvmaze.com/search/shows"

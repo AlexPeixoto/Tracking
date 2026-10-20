@@ -15,9 +15,9 @@ import logging
 import os
 import shutil
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
 
 from . import db, paths, volumes
 from .scan.model import GROUP_SEP, fs_path
@@ -59,7 +59,21 @@ def plan(conn: sqlite3.Connection, item: db.Item, mount: str | None, dest_dir: s
     src = volumes.join(mount, item.rel_path)
     if not os.path.exists(src):
         raise TransferError(f"{src} isn't there anymore. Rescan first.")
-    if os.path.normcase(os.path.abspath(dest_dir)).startswith(os.path.normcase(os.path.abspath(src))):
+    # Never a whole drive or a whole location: a move deletes what it copied.
+    is_root = conn.execute("SELECT 1 FROM roots WHERE volume_uid=? AND rel_path=?",
+                           (item.volume_uid, item.rel_path)).fetchone()
+    if not item.rel_path.strip("/") or is_root:
+        raise TransferError(f"{src} is a whole drive or location, not one item.")
+    # Other items inside this folder (e.g. stray ROMs found in a game folder) would lose
+    # their files without their entries knowing.
+    inside = conn.execute(
+        "SELECT COUNT(*) FROM items WHERE volume_uid=? AND id != ? AND substr(rel_path, 1, ?) = ?",
+        (item.volume_uid, item.id, len(item.rel_path) + 1, item.rel_path + "/")).fetchone()[0]
+    if item.is_dir and inside:
+        raise TransferError(f"{item.title}'s folder also holds {inside} other item(s); move those "
+                            "first, or move the folder outside Tracking and rescan.")
+    a, b = os.path.normcase(os.path.abspath(dest_dir)), os.path.normcase(os.path.abspath(src))
+    if os.path.commonpath([a, b]) == b:
         raise TransferError("The destination is inside the item itself.")
     if item.is_dir:
         sources = []
@@ -132,13 +146,16 @@ def apply(conn: sqlite3.Connection, p: Plan) -> int:
     loc = volumes.identify(p.dest)
     v = loc.volume
     conn.execute("INSERT INTO volumes(uid, serial, label, last_mount) VALUES(?,?,?,?) "
-                 "ON CONFLICT(uid) DO UPDATE SET last_mount=excluded.last_mount", (v.uid, v.serial, v.label, v.mount))
+                 "ON CONFLICT(uid) DO UPDATE SET last_mount=excluded.last_mount",
+                 (v.uid, v.serial, v.label, v.mount))
     old = conn.execute("SELECT * FROM items WHERE id=?", (p.item_id,)).fetchone()
     old_rel, new_rel = old["rel_path"], loc.rel_path
     old_where = describe(conn, old["volume_uid"], old_rel)
     new_where = describe(conn, v.uid, new_rel)
+    # The innermost location the new place is in (exact prefix test: no LIKE wildcards).
     root = conn.execute(
-        "SELECT id FROM roots WHERE volume_uid=? AND (?=rel_path OR ? LIKE rel_path || '/%' OR rel_path='')",
+        "SELECT id FROM roots WHERE volume_uid=? AND (rel_path='' OR ?=rel_path OR "
+        "substr(?, 1, length(rel_path) + 1) = rel_path || '/') ORDER BY length(rel_path) DESC",
         (v.uid, new_rel, new_rel)).fetchone()
 
     def moved(path: str | None) -> str | None:
@@ -162,8 +179,9 @@ def apply(conn: sqlite3.Connection, p: Plan) -> int:
                          (moved(m["rel_path"]), target, m["rel_path"]))
         note(conn, target, "moved", f"Moved from {old_where} to {new_where}")
     else:
-        cols = [c for c in old.keys() if c not in ("id", "volume_uid", "rel_path", "root_id", "poster",
-                                                   "copy_of", "launch_path", "user_launch")]
+        skip = ("id", "volume_uid", "rel_path", "root_id", "poster", "copy_of", "launch_path",
+                "user_launch")
+        cols = [c for c in old.keys() if c not in skip]  # noqa: SIM118 - a Row iterates values
         target = conn.execute(
             f"INSERT INTO items(volume_uid, rel_path, root_id, copy_of, launch_path, user_launch, "
             f"{', '.join(cols)}) VALUES(?,?,?,?,?,?,{', '.join('?' * len(cols))})",
@@ -201,5 +219,6 @@ def note(conn: sqlite3.Connection, item_id: int, action: str, detail: str) -> No
 
 
 def history(conn: sqlite3.Connection, item_id: int) -> list[sqlite3.Row]:
-    return conn.execute("SELECT at, action, detail FROM item_history WHERE item_id=? ORDER BY at DESC, rowid DESC",
+    return conn.execute("SELECT at, action, detail FROM item_history WHERE item_id=? "
+                        "ORDER BY at DESC, rowid DESC",
                         (item_id,)).fetchall()

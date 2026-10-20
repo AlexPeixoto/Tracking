@@ -6,9 +6,18 @@ Accepts either the short v3 "API key" or the long v4 "read access token".
 from __future__ import annotations
 
 from .base import (
-    Episode, Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, Setting, best_match,
+    Episode,
+    Metadata,
+    Provider,
+    ProviderError,
+    Query,
+    RateLimiter,
+    ScoreEntry,
+    Setting,
+    best_match,
     cached_json,
-    session, year_of,
+    session,
+    year_of,
 )
 
 API_URL = "https://api.themoviedb.org/3"

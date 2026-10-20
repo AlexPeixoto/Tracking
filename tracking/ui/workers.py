@@ -256,7 +256,8 @@ class CompletionCoversJob(Job):
                 if completions.fetch_cover(conn, cid):
                     found += 1
                     conn.commit()
-                    self.signals.item_changed.emit(-1)
+                    if found % 10 == 1:  # refresh now and then, not after every cover
+                        self.signals.item_changed.emit(-1)
             except Exception as e:
                 log.warning("cover for completed %r failed: %s", c.title, e)
         return f"Covers found for {found} of {len(todo)} completed entries"

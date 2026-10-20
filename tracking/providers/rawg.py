@@ -4,8 +4,18 @@ from __future__ import annotations
 
 from .. import platforms
 from .base import (
-    Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, Setting, best_match,
-    cached_json, platform_matches, session, year_of,
+    Metadata,
+    Provider,
+    ProviderError,
+    Query,
+    RateLimiter,
+    ScoreEntry,
+    Setting,
+    best_match,
+    cached_json,
+    platform_matches,
+    session,
+    year_of,
 )
 
 API_URL = "https://api.rawg.io/api/games"

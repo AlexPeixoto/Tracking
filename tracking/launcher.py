@@ -22,9 +22,9 @@ import sys
 import threading
 import time
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable
 
 from . import db, paths, platforms, scan, volumes
 
@@ -108,7 +108,7 @@ def plan(conn: sqlite3.Connection, item: db.Item, mount: str | None) -> Launch:
         raise LaunchError(f"{item.title} is on a drive that isn't connected.")
     if not os.path.exists(path):
         raise LaunchError(f"{path} isn't there anymore. Rescan, or pick the file again.")
-    extra = shlex.split(item.launch_args or "", posix=False)
+    extra = split_args(item.launch_args)
 
     if not item.platform or item.platform == "PC":
         if not path.lower().endswith((".exe", ".bat", ".cmd", ".lnk")):
@@ -132,13 +132,20 @@ def plan(conn: sqlite3.Connection, item: db.Item, mount: str | None) -> Launch:
                   cwd=os.path.dirname(exe), unzip=path if unzip else None)
 
 
+def split_args(text: str | None) -> list[str]:
+    """Windows-style arguments: spaces separate, "quotes" group (and are removed - the
+    command list is quoted again when it's started)."""
+    out = []
+    for part in shlex.split(text or "", posix=False):
+        out.append(part[1:-1] if len(part) >= 2 and part[0] == part[-1] == '"' else part)
+    return out
+
+
 def build_command(exe: str, template: str, file: str, extra: list[str] | None = None) -> list[str]:
     """``exe`` + the template's arguments with {file} filled in (quotes keep spaces)."""
-    args = []
-    for part in shlex.split(template, posix=False):
-        unquoted = part[1:-1] if len(part) >= 2 and part[0] == part[-1] == '"' else part
-        args.append(unquoted.replace("{file}", file))
-    if not any("{file}" in p for p in shlex.split(template, posix=False)):
+    parts = split_args(template)
+    args = [p.replace("{file}", file) for p in parts]
+    if not any("{file}" in p for p in parts):
         args.append(file)
     return [exe, *args, *(extra or [])]
 
@@ -195,7 +202,7 @@ def start(launch: Launch) -> subprocess.Popen | None:
     Returns the process to time the session with (None for Steam URLs)."""
     if launch.url:
         if sys.platform == "win32":
-            os.startfile(launch.url)  # noqa: S606 - the user asked to play this
+            os.startfile(launch.url)
         else:
             subprocess.Popen(["xdg-open", launch.url])
         return None

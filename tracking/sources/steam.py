@@ -19,9 +19,9 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Callable
+from datetime import UTC, datetime
 
 from .. import db, library, titles
 from ..providers import steam as steam_store
@@ -158,7 +158,7 @@ def parse_owned_games(data: dict) -> list[OwnedGame]:
         games.append(OwnedGame(
             int(g["appid"]), _clean_name(g.get("name") or "") or f"Steam app {g['appid']}",
             float(g.get("playtime_forever") or 0),
-            datetime.fromtimestamp(last, timezone.utc).date().isoformat() if last else None))
+            datetime.fromtimestamp(last, UTC).date().isoformat() if last else None))
     return games
 
 
@@ -188,7 +188,7 @@ def wishlist(id64: str) -> list[int]:
 # --------------------------------------------------------------------------- sync
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _library_games(conn: sqlite3.Connection) -> tuple[dict[int, int], dict[str, int]]:

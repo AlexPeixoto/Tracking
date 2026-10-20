@@ -12,13 +12,14 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from contextlib import contextmanager
 from collections import defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
-from . import categories, paths, scores as score_math
+from . import categories, paths
+from . import scores as score_math
 
 log = logging.getLogger(__name__)
 
@@ -179,8 +180,8 @@ MIGRATIONS = [
     ("items", "last_episode_season", "INTEGER"),
     ("items", "last_watched", "TEXT"),      # when it was played
     ("items", "playtime_local_min", "REAL"),  # time in games started from Tracking
-    ("completions", "hours", "REAL"),
-    ("items", "copy_of", "INTEGER"),        # a copy made with Copy to… (of this item)       # play time when you finished it (Steam / timed)
+    ("completions", "hours", "REAL"),       # play time when you finished it (Steam / timed)
+    ("items", "copy_of", "INTEGER"),        # a copy made with Copy to… (of this item)
 ]
 
 
@@ -294,7 +295,7 @@ class Item:
     missing: bool
     detected_title: str
     video_count: int
-    scores: list["Score"] = field(default_factory=list)  # every site's score, best-known first
+    scores: list[Score] = field(default_factory=list)  # every site's score, best-known first
     install_state: str | None = None
     launch_path: str | None = None       # what Play starts: your choice, else the detected one
     launch_args: str | None = None

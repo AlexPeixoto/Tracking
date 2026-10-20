@@ -112,7 +112,7 @@ def draw_icon(size: int = 256) -> QPixmap:
     p.drawRoundedRect(QRectF(8 * s, 8 * s, 240 * s, 240 * s), 52 * s, 52 * s)
     cards = [("anime", -14, 62, 70), ("movie", 0, 128, 58), ("game", 14, 194, 70)]  # icon art
     for cat, angle, cx, top in cards:
-        c1, c2 = category_gradient(cat)
+        c1, _ = category_gradient(cat)
         g = QLinearGradient(0, 0, 0, 120 * s)
         g.setColorAt(0, c1.lighter(115))
         g.setColorAt(1, c1)

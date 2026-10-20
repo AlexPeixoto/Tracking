@@ -7,7 +7,8 @@ Anything with ``source``, ``value`` and ``max_value`` attributes works here.
 
 from __future__ import annotations
 
-from typing import Iterable, Protocol
+from collections.abc import Iterable
+from typing import Protocol
 
 
 class ScoreLike(Protocol):

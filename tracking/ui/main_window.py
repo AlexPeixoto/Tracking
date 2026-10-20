@@ -9,9 +9,27 @@ import subprocess
 from PySide6.QtCore import QSize, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListView, QMainWindow,
-    QMenu, QMessageBox, QPushButton, QSplitter, QStackedWidget, QToolBar, QToolButton, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QWidget,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListView,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QStackedWidget,
+    QToolBar,
+    QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 from .. import categories, completions, db, launcher, library, platforms, scan, titles, volumes
@@ -21,7 +39,7 @@ from . import dialogs
 from .completed_page import CompletedPage
 from .grid import OFFLINE_TEXT, CardDelegate, ItemModel, ItemRole
 from .item_page import ItemPage
-from .workers import CompletionCoversJob, LaunchJob, TransferJob, EnrichJob, Job, ScanJob
+from .workers import CompletionCoversJob, EnrichJob, Job, LaunchJob, ScanJob, TransferJob
 
 SECTIONS = [(c.key, c.label) for c in categories.CATEGORIES]
 SORTS = [("title", "Title"), ("avg", "Score: average"), ("best", "Score: highest"),

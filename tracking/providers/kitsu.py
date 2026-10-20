@@ -7,8 +7,17 @@ scores, so it's used after AniDB and MyAnimeList (which have them).
 from __future__ import annotations
 
 from .base import (
-    Episode, Metadata, Provider, Query, RateLimiter, ScoreEntry, best_match, cached_json,
-    media_format_bonus, session, year_of,
+    Episode,
+    Metadata,
+    Provider,
+    Query,
+    RateLimiter,
+    ScoreEntry,
+    best_match,
+    cached_json,
+    media_format_bonus,
+    session,
+    year_of,
 )
 
 API_URL = "https://kitsu.app/api/edge/anime"

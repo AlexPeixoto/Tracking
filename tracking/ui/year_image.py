@@ -15,8 +15,19 @@ from dataclasses import asdict, dataclass
 from PySide6.QtCore import QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QColorDialog, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
+    QCheckBox,
+    QColorDialog,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
 )
 
 from .. import completions, db
@@ -52,7 +63,7 @@ class Options:
         return round(self.cover_width * SHAPES.get(self.shape, 4 / 3))
 
     @classmethod
-    def load(cls, conn) -> "Options":
+    def load(cls, conn) -> Options:
         try:
             data = json.loads(db.get_setting(conn, SETTING) or "{}")
             return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})

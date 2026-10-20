@@ -101,7 +101,7 @@ def test_profile_xml():
 
 def test_profile_not_found_explains_what_to_type():
     xml = "<response><error><![CDATA[The specified profile could not be found.]]></error></response>"
-    with pytest.raises(steam.SteamError, match="could not be found.*profile URL"):
+    with pytest.raises(steam.SteamError, match=r"could not be found.*profile URL"):
         steam.parse_profile_xml(xml)
 
 

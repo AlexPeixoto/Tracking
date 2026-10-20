@@ -6,7 +6,8 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, QPointF, QRect, QRec
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
-from .. import db, paths, scores as score_math
+from .. import db, paths
+from .. import scores as score_math
 from . import theme
 
 CARD_W, POSTER_H, TEXT_H = 168, 240, 58

@@ -106,6 +106,7 @@ def test_duplicates_and_health(conn):
 
 def test_space_toggles_completed_and_focus_view(conn, qt):
     from PySide6.QtCore import QItemSelectionModel
+
     from tracking.ui import main_window
 
     a = _item(conn, "Okami")

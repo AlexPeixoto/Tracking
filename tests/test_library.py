@@ -79,5 +79,6 @@ def test_export_missing_data_list(tmp_path, monkeypatch):
         library.acquire(conn, [a])
         items = [i for i in db.list_items(conn) if library.missing_data(i)]
         assert library.export_list(conn, items, str(tmp_path / "out.csv")) == 1
-    rows = list(csv.DictReader(open(tmp_path / "out.csv", encoding="utf-8-sig")))
+    with open(tmp_path / "out.csv", encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
     assert rows[0]["title"] == "Afro Samurai" and rows[0]["cover"] == "no"

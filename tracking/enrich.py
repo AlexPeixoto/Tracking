@@ -7,14 +7,13 @@ import os
 import re
 import shutil
 import sqlite3
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 
-from . import categories, db, duration, paths, scan, volumes
-from .scores import RATING_PREF
-from . import providers
+from . import categories, db, duration, paths, providers, scan, volumes
 from .providers import Metadata, ProviderError
 from .providers.base import search_variants, session
+from .scores import RATING_PREF
 
 log = logging.getLogger(__name__)
 
@@ -233,7 +232,10 @@ def enrich_item(conn: sqlite3.Connection, item_id: int, mount: str | None,
             conn.commit()
             log.info("episodes for %r: %d from %s", item.title, len(found[1]), found[0])
 
-    poster = None if force else item.poster
+    # Refetch looks for a new cover, but keeps the old one if none turns up (a service
+    # being down shouldn't leave the item blank).
+    old_poster = item.poster
+    poster = None if force else old_poster
     if mount and not poster:
         art = _local_art(item_abs_path(mount, item))
         if art:
@@ -243,8 +245,9 @@ def enrich_item(conn: sqlite3.Connection, item_id: int, mount: str | None,
             poster = _save_poster(item.id, url=md.poster_url)
         except Exception as e:
             warnings.append(f"Poster for {item.title}: {e}")
+    poster = poster or old_poster
 
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     if md:
         conn.execute(
             "UPDATE items SET rating=?, rating_max=?, rating_source=?, external_id=?, "
@@ -255,7 +258,12 @@ def enrich_item(conn: sqlite3.Connection, item_id: int, mount: str | None,
              md.summary, md.hltb_hours, md.hltb_extra, md.hltb_complete, md.year, poster, now,
              item.id),
         )
-        conn.execute("DELETE FROM scores WHERE item_id=?", (item.id,))
+        if warnings:
+            # A service failed this time: replace only the scores we got, keep its old one.
+            conn.executemany("DELETE FROM scores WHERE item_id=? AND source=?",
+                             [(item.id, sc.source) for sc in md.scores])
+        else:
+            conn.execute("DELETE FROM scores WHERE item_id=?", (item.id,))
         conn.executemany(
             "INSERT OR REPLACE INTO scores(item_id, source, value, max_value, url) VALUES(?,?,?,?,?)",
             [(item.id, sc.source, sc.value, sc.max_value, sc.url) for sc in md.scores],

@@ -18,7 +18,15 @@ from rapidfuzz import fuzz, process
 
 from .. import titles
 from .base import (
-    Episode, Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, Setting, cache_file,
+    Episode,
+    Metadata,
+    Provider,
+    ProviderError,
+    Query,
+    RateLimiter,
+    ScoreEntry,
+    Setting,
+    cache_file,
     session,
 )
 

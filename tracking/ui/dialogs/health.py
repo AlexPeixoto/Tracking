@@ -5,7 +5,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QGridLayout, QLabel, QPushButton, QVBoxLayout,
+    QDialog,
+    QDialogButtonBox,
+    QGridLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
 )
 
 from ... import library

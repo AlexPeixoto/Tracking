@@ -9,7 +9,15 @@ from __future__ import annotations
 import re
 
 from .base import (
-    Candidate, Metadata, Provider, ProviderError, Query, ScoreEntry, Setting, cached_json, session,
+    Candidate,
+    Metadata,
+    Provider,
+    ProviderError,
+    Query,
+    ScoreEntry,
+    Setting,
+    cached_json,
+    session,
     similarity,
 )
 

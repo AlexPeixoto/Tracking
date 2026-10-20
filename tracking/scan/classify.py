@@ -227,7 +227,7 @@ class Hints:
     category: str | None = None
     platform: str | None = None
 
-    def child(self, folder_name: str) -> tuple["Hints", bool]:
+    def child(self, folder_name: str) -> tuple[Hints, bool]:
         """Hints for a sub-folder, and whether the folder name itself was a keyword."""
         # Inside a platform folder, sub-folders are game titles, not more platforms.
         # Inside an anime / movie / TV folder, a title like "Saturn" is just a title.
@@ -304,7 +304,7 @@ def platform_from_tags(name: str) -> str | None:
     "[FitGirl PC Repack]" / "Game-CODEX" -> PC; "[01004E90149AA000]" (a Switch
     title id) -> Switch; "(PS2)" -> PS2.
     """
-    found, plat = game_name_evidence(name)
+    _, plat = game_name_evidence(name)
     if plat:
         return plat
     tags = " ".join(re.findall(r"[\[(]([^\])]*)[\])]", name))

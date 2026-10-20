@@ -11,8 +11,16 @@ import time
 
 from .. import platforms, titles
 from .base import (
-    Metadata, Provider, ProviderError, Query, RateLimiter, ScoreEntry, Setting, best_match,
-    cached_json, session,
+    Metadata,
+    Provider,
+    ProviderError,
+    Query,
+    RateLimiter,
+    ScoreEntry,
+    Setting,
+    best_match,
+    cached_json,
+    session,
 )
 
 TOKEN_URL = "https://id.twitch.tv/oauth2/token"
@@ -74,7 +82,8 @@ def _search(title: str, platform: str | None, client_id: str, secret: str) -> Me
         return 8 if want and want in names else 0
 
     best = best_match(title, None, games,
-                      names=lambda g: [g.get("name"), *(a.get("name") for a in g.get("alternative_names") or [])],
+                      names=lambda g: [g.get("name"),
+                                       *(a.get("name") for a in g.get("alternative_names") or [])],
                       bonus=on_platform)
     if not best:
         return None

@@ -29,7 +29,7 @@ import sqlite3
 import tempfile
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__, db, paths, providers
@@ -89,7 +89,7 @@ def export_zip(zip_path: Path, images: bool = True, credentials: bool = False) -
         covers = sorted(f for f in paths.posters_dir().iterdir() if f.is_file()) if images else []
         manifest = {
             "format": FORMAT, "app_version": __version__, "images": images,
-            "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "exported_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "covers": len(covers), "credentials": credentials,
         }
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:

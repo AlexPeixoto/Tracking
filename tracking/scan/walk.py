@@ -13,14 +13,20 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Callable, Iterator
+from collections.abc import Callable, Iterator
 
 from .. import titles
 from . import classify, discid, install
 from .classify import ARCHIVE_EXT, DISC_EXT, ROM_EXT, VIDEO_EXT, Hints
 from .model import GROUP_SEP, FileEntry, FoundItem, vol_rel
 from .videos import (
-    EXTRA_DIRS, display_title, group_videos, is_extra_dir, is_extra_file, is_extra_path, season_tag,
+    EXTRA_DIRS,
+    display_title,
+    group_videos,
+    is_extra_dir,
+    is_extra_file,
+    is_extra_path,
+    season_tag,
 )
 
 log = logging.getLogger(__name__)
@@ -114,7 +120,7 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
             item.install_state = state
             item.launch_path = vol_rel(dir_rel, target) if target else None
         log.debug("game %r [%s] <- %s (%s)", item.title, d.platform or "?", dir_rel, d.reason)
-        return [item] + extra
+        return [item, *extra]
 
     groups = group_videos(videos)
     folder = titles.parse_video(titles.strip_order_prefix(name))
@@ -174,7 +180,7 @@ def _ask_disc(platform: str | None, title: str, reason: str, paths: list[str],
     weak = titles.is_weak_title(title) or titles.normalize(title) in _NAMELESS
     if addon or (platform and not weak):
         return platform, title, reason
-    images = [p for p in paths if p.lower().endswith(discid.IMAGE_EXT + (".zip",))]
+    images = [p for p in paths if p.lower().endswith((*discid.IMAGE_EXT, ".zip"))]
     for path in sorted(images, key=lambda p: -_size(p))[:2]:
         info = discid.identify(path)
         if not info:
@@ -186,7 +192,7 @@ def _ask_disc(platform: str | None, title: str, reason: str, paths: list[str],
     return platform, title, reason
 
 
-_LAUNCHABLE = (".exe",) + tuple(classify.ROM_EXT) + tuple(classify.DISC_EXT) + tuple(classify.ARCHIVE_EXT)
+_LAUNCHABLE = (".exe", *classify.ROM_EXT, *classify.DISC_EXT, *classify.ARCHIVE_EXT)
 
 
 def _launch_candidates(pairs: list[tuple[str, str]]) -> list[tuple[str, int]]:
@@ -267,7 +273,8 @@ def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iter
         first = members[0]
         only_addons = _is_addon(stems[first.name])
         is_game = any(classify.game_name_evidence(m.name)[0] for m in members)
-        tag_platform = next((p for p in (classify.platform_from_tags(stems[m.name]) for m in members) if p), None)
+        tag_platform = next(
+            (p for p in (classify.platform_from_tags(stems[m.name]) for m in members) if p), None)
         sig = classify.inspect_files([(m.name, m.path) for m in members])
         d = classify.decide(hints, sig, tag_platform,
                             _path_platform(vol_rel(dir_rel, first.name)), name_is_game=is_game)

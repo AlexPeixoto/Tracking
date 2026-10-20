@@ -54,7 +54,7 @@ def make_sfo(entries: dict[str, str]) -> bytes:
     data_at = keys_at + len(keys) + (-len(keys)) % 4
     head = b"\0PSF" + struct.pack("<IIII", 0x101, keys_at, data_at, len(entries))
     table, key_off, data_off = b"", 0, 0
-    for k, v in zip(entries, values):
+    for k, v in zip(entries, values, strict=True):
         table += struct.pack("<HHIII", key_off, 0x0204, len(v), len(v), data_off)
         key_off += len(k) + 1
         data_off += len(v)

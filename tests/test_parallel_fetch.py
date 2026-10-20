@@ -7,9 +7,9 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from tracking import db, enrich  # noqa: E402
-from tracking.providers.base import RateLimiter  # noqa: E402
-from tracking.ui import workers  # noqa: E402
+from tracking import db, enrich
+from tracking.providers.base import RateLimiter
+from tracking.ui import workers
 
 
 @pytest.fixture
@@ -95,7 +95,7 @@ def test_rate_limiter_is_shared_across_threads():
         th.start()
     for th in threads:
         th.join()
-    gaps = [b - a for a, b in zip(sorted(stamps), sorted(stamps)[1:])]
+    gaps = [b - a for a, b in zip(sorted(stamps), sorted(stamps)[1:], strict=False)]
     assert min(gaps) >= 0.045
 
 

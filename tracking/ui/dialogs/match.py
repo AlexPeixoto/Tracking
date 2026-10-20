@@ -4,10 +4,17 @@ title (and Steam app) from now on."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QThreadPool, Qt
+from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
 )
 
 from ... import db, library, providers

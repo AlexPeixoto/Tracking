@@ -10,7 +10,6 @@ import pytest
 from tracking import db, launcher, library, providers, scan
 from tracking.providers.base import search_variants, similarity
 from tracking.scan import install
-from tracking.scan.classify import Hints
 
 
 @pytest.fixture

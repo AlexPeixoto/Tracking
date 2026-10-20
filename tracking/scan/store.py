@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from .. import db, paths, titles, volumes
 from .merge import collect
@@ -70,7 +70,7 @@ def scan_root(conn: sqlite3.Connection, root_id: int,
         raise VolumeOffline(root["volume_uid"])
     root_abs = volumes.join(mount, root["rel_path"])
     hints = root_hints(root["category"], root["platform"], root["rel_path"])
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
 
     log.info("scanning %s (category=%s, hints=%s)", root_abs, root["category"], hints)
     result = ScanResult()
@@ -223,7 +223,8 @@ def _upsert(conn: sqlite3.Connection, root_id: int, volume_uid: str, f: FoundIte
     conn.execute("DELETE FROM media_files WHERE item_id=?", (item_id,))
     for v in f.videos:
         prev = old.get(v.rel_path)
-        dur = prev["duration_sec"] if prev and prev["size_bytes"] == v.size and prev["mtime"] == v.mtime else None
+        unchanged = prev and prev["size_bytes"] == v.size and prev["mtime"] == v.mtime
+        dur = prev["duration_sec"] if unchanged else None
         conn.execute(
             "INSERT INTO media_files(item_id, rel_path, size_bytes, mtime, duration_sec, season, "
             "episode) VALUES(?,?,?,?,?,?,?)",

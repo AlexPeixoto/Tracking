@@ -93,7 +93,7 @@ class _Disc:
             return None
         lba, size = struct.unpack_from("<I", pvd, 156 + 2)[0], struct.unpack_from("<I", pvd, 156 + 10)[0]
         for part in path.upper().split("/"):
-            hit = next(((l, s) for n, l, s in self._entries(lba, size) if n == part), None)
+            hit = next(((at, sz) for n, at, sz in self._entries(lba, size) if n == part), None)
             if not hit:
                 return None
             lba, size = hit

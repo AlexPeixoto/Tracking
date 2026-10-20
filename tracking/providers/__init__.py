@@ -14,8 +14,21 @@ Settings, enrichment and logging pick it up from there.
 from __future__ import annotations
 
 from . import (
-    anidb, anilist, hltb, igdb, kitsu, libretro, mal, omdb, opencritic, rawg, steam, tmdb, trakt,
-    tvmaze, wikidata,
+    anidb,
+    anilist,
+    hltb,
+    igdb,
+    kitsu,
+    libretro,
+    mal,
+    omdb,
+    opencritic,
+    rawg,
+    steam,
+    tmdb,
+    trakt,
+    tvmaze,
+    wikidata,
 )
 from .base import Candidate, Episode, Metadata, Provider, ProviderError, Query, ScoreEntry, Setting
 
@@ -64,7 +77,7 @@ def search_all(q: Query, limit: int = 12) -> list[Candidate]:
             continue
         try:
             out += p.search(q)[:limit]
-        except Exception:  # noqa: BLE001 - one service down shouldn't hide the others
+        except Exception:
             continue
     return out
 
@@ -75,6 +88,20 @@ def credential_keys() -> set[str]:
     return {s.key for p in REGISTRY for s in p.settings}
 
 
-__all__ = ["Candidate", "Episode", "Metadata", "Provider", "ProviderError", "Query", "REGISTRY", "ScoreEntry", "Setting",
-           "credential_keys", "search", "search_all", "settings_for",
-           "for_category", "for_query"]
+__all__ = [
+    "REGISTRY",
+    "Candidate",
+    "Episode",
+    "Metadata",
+    "Provider",
+    "ProviderError",
+    "Query",
+    "ScoreEntry",
+    "Setting",
+    "credential_keys",
+    "for_category",
+    "for_query",
+    "search",
+    "search_all",
+    "settings_for",
+]

@@ -8,9 +8,23 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-    QGridLayout, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTabWidget,
-    QVBoxLayout, QWidget,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ... import archive, categories, db, launcher, log, paths, platforms, providers
@@ -136,7 +150,8 @@ class SettingsDialog(QDialog):
                     h.setObjectName("Muted")
                     form.addRow("", h)
                 tabs.addTab(page, cat.label)
-        note = QLabel("After adding keys, use “Update metadata” or Refetch on an item to pull the new scores.")
+        note = QLabel("After adding keys, use “Update metadata” or Refetch on an item to pull "
+                      "the new scores.")
         note.setObjectName("Muted")
         note.setWordWrap(True)
         lay.addWidget(note)

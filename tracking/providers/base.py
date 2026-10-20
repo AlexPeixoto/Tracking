@@ -8,9 +8,9 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, Mapping
 
 import requests
 from rapidfuzz import fuzz
@@ -92,7 +92,7 @@ class Query:
     def setting(self, key: str) -> str:
         return (self.settings.get(key) or "").strip()
 
-    def with_title(self, title: str) -> "Query":
+    def with_title(self, title: str) -> Query:
         return replace(self, title=title)
 
 
@@ -115,16 +115,16 @@ class Provider:
     name: str                                   # id used in logs and cover priority
     label: str                                  # shown in Settings ("TVmaze")
     categories: frozenset[str]
-    lookup: Callable[[Query], "Metadata | None"]
+    lookup: Callable[[Query], Metadata | None]
     settings: tuple[Setting, ...] = ()          # shown in Settings for its categories
     required: tuple[str, ...] = ()              # setting keys it can't work without
     cover_rank: int = 50                        # lower = its cover art is preferred
     applies: Callable[[Query], bool] = lambda q: True
     # Optional: list the episodes of the title ``lookup`` found, given its
     # Metadata.external_id. Services earlier in the registry are asked first.
-    episodes: "Callable[[Query, str], list[Episode]] | None" = None
+    episodes: Callable[[Query, str], list[Episode]] | None = None
     # Optional: several results for a free-text search ("Want to acquire").
-    search: "Callable[[Query], list[Candidate]] | None" = None
+    search: Callable[[Query], list[Candidate]] | None = None
 
     def configured(self, q: Query) -> bool:
         return all(q.setting(k) for k in self.required)

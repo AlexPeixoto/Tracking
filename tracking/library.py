@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from . import categories, db, paths
 
 
-
 def set_completed(conn: sqlite3.Connection, item_ids: list[int], done: bool) -> None:
     """You marked items (not) completed: also logged in the Completed section, dated today.
     (Scans marking missing items completed use db.set_completed: no date to log.)"""
