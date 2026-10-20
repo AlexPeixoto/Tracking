@@ -74,6 +74,7 @@ class ItemPage(QScrollArea):
     deleted = Signal(int)
     play = Signal(int)
     find_match = Signal(int)         # search services by hand
+    play_episode = Signal(int, object, object)  # item id, season, episode
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -104,6 +105,13 @@ class ItemPage(QScrollArea):
         self.poster = QLabel()
         self.poster.setFixedSize(POSTER_W, POSTER_H)
         left.addWidget(self.poster)
+        # No cover found: the most useful next step, right where the cover would be.
+        self.nomatch_btn = QPushButton("Nothing found – Find match…")
+        self.nomatch_btn.setObjectName("Primary")
+        self.nomatch_btn.setToolTip("Search the services with another name (the store's spelling) "
+                                    "and pick the right result")
+        self.nomatch_btn.clicked.connect(lambda: self.find_match.emit(self.item.id))
+        left.addWidget(self.nomatch_btn)
         self.open_btn = QPushButton("Open folder")
         self.open_btn.clicked.connect(lambda: self.open_folder.emit(self.item.id))
         refetch = QPushButton("Refetch metadata")
@@ -197,7 +205,8 @@ class ItemPage(QScrollArea):
         for col in (0, 2, 3, 4):
             header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         self.episodes.cellDoubleClicked.connect(self._open_episode)
-        self.episodes.setToolTip("Double-click an episode to open its page")
+        self.episodes.setToolTip("Double-click an episode you have to play it "
+                                 "(others open their page)")
         right.addWidget(self.episodes)
 
         right.addWidget(_section("Summary"))
@@ -255,6 +264,7 @@ class ItemPage(QScrollArea):
         if pm:
             pm = pm.copy((pm.width() - POSTER_W) // 2, (pm.height() - POSTER_H) // 2, POSTER_W, POSTER_H)
         self.poster.setPixmap(pm or posters.placeholder(item, POSTER_W, POSTER_H))
+        self.nomatch_btn.setVisible(not item.poster and item.source != db.STEAM)
 
         self.title.setText(item.title)
         cat = categories.get(item.category)
@@ -360,10 +370,15 @@ class ItemPage(QScrollArea):
         else:
             status = "drive not connected"
         path = "/" + item.rel_path.replace("/", "/​")
+        from .. import transfer
+
+        with db.session() as conn:
+            past = transfer.history(conn, item.id)[:4]
+        moves = "".join(f"<br>{h['at'][:10]}: {h['detail']}" for h in past)
         self.location.setText(
             f"<b>{drive_label}</b> — {status}<br>{path}<br>"
             f"{item.file_count} files · {fmt_size(item.size_bytes)}"
-            + (f"<br><i>Detected: {item.detected_how}</i>" if item.detected_how else ""))
+            + (f"<br><i>Detected: {item.detected_how}</i>" if item.detected_how else "") + moves)
         self.open_btn.setEnabled(bool(mount) and not item.missing)
 
     def _fill_episodes(self, item: db.Item) -> None:
@@ -376,6 +391,8 @@ class ItemPage(QScrollArea):
             return
         self.episodes.setRowCount(len(eps))
         self._episode_urls = [e.url for e in eps]
+        self._episode_keys = [(e.season, e.number, e.on_disk) for e in eps]
+        last = (item.last_episode_season or 1, item.last_episode) if item.last_episode else None
         for row, e in enumerate(eps):
             score = QTableWidgetItem(scores_fmt(e) if e.score is not None else "–")
             if e.score is not None:
@@ -385,6 +402,13 @@ class ItemPage(QScrollArea):
                 title += f"  ({e.note})"
             cells = [QTableWidgetItem(f"{e.number}"), QTableWidgetItem(title), score,
                      QTableWidgetItem(e.aired or ""), QTableWidgetItem("✓" if e.on_disk else "")]
+            if last and ((e.season or 1), e.number) == last:
+                cells[4].setText("✓  ▶" if e.on_disk else "▶")
+                cells[4].setToolTip("The last one you played")
+                for c in cells[:2]:
+                    f = c.font()
+                    f.setBold(True)
+                    c.setFont(f)
             for col, cell in enumerate(cells):
                 if col != 1:
                     cell.setTextAlignment(Qt.AlignCenter)
@@ -410,6 +434,10 @@ class ItemPage(QScrollArea):
         self.episodes_info.setText("  ·  ".join(bits))
 
     def _open_episode(self, row: int, _col: int) -> None:
+        keys = getattr(self, "_episode_keys", [])
+        if row < len(keys) and keys[row][2]:  # on disk: play it
+            self.play_episode.emit(self.item.id, keys[row][0], keys[row][1])
+            return
         url = self._episode_urls[row] if row < len(self._episode_urls) else None
         if url:
             QDesktopServices.openUrl(QUrl(url))
@@ -420,9 +448,14 @@ class ItemPage(QScrollArea):
         from ..scan import install
 
         game = item.category == "game" and item.source != db.WANTED
-        self.play_btn.setVisible(game)
+        video = (categories.get(item.category).key in ("anime", "tv", "movie")
+                 and item.source != db.WANTED and item.video_count > 0)
+        self.play_btn.setVisible(game or video)
         self.launch_btn.setVisible(game and item.source != db.STEAM)
-        self.play_info.setVisible(game)
+        self.play_info.setVisible(game or video)
+        if video:
+            self._show_video_play(item, mount)
+            return
         if not game:
             return
         setup = item.install_state == install.INSTALLER
@@ -446,6 +479,32 @@ class ItemPage(QScrollArea):
         elif not mount and not item.steam_appid:
             bits.append("drive not connected")
         self.play_info.setText("  ·  ".join(bits))
+
+    def _show_video_play(self, item: db.Item, mount: str | None) -> None:
+        from .. import launcher
+
+        with db.session() as conn:
+            nxt = launcher.next_episode(conn, item)
+        movie = item.kind == "movie" or item.category == "movie"
+        if movie:
+            self.play_btn.setText("▶  Play")
+        elif nxt is None:
+            self.play_btn.setText("▶  Start over")
+        else:
+            self.play_btn.setText(f"▶  Play episode {nxt.episode}" if nxt.episode is not None
+                                  else "▶  Play")
+        self.play_btn.setEnabled(bool(mount) and not item.missing)
+        bits = []
+        if item.last_episode is not None and not movie:
+            bits.append(f"last played episode {item.last_episode}"
+                        + (f" on {item.last_watched[:10]}" if item.last_watched else ""))
+        elif item.last_watched:
+            bits.append(f"last played {item.last_watched[:10]}")
+        if nxt is None and not movie:
+            bits.append("every episode played")
+        if not mount:
+            bits.append("drive not connected")
+        self.play_info.setText("  ·  ".join(bits) or "Double-click an episode below to play it")
 
     def _launch_options(self) -> None:
         dlg = LaunchOptionsDialog(self.item, getattr(self, "mount", None), self)

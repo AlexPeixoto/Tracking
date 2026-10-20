@@ -262,6 +262,40 @@ class CompletionCoversJob(Job):
         return f"Covers found for {found} of {len(todo)} completed entries"
 
 
+class TransferJob(Job):
+    """Copy / move items to a folder (Copy to… / Move to…), one after another."""
+
+    def __init__(self, item_ids: list[int], dest_dir: str, move: bool, mounts: dict):
+        super().__init__()
+        self.item_ids, self.dest_dir, self.move, self.mounts = item_ids, dest_dir, move, mounts
+
+    def work(self, conn) -> str:
+        from .. import transfer
+
+        done = 0
+        for iid in self.item_ids:
+            if self.cancelled():
+                break
+            item = db.get_item(conn, iid)
+            if not item:
+                continue
+            try:
+                plan = transfer.plan(conn, item, self.mounts.get(item.volume_uid), self.dest_dir, self.move)
+                transfer.copy_files(plan, self.signals.progress.emit, self.cancelled)
+                transfer.apply(conn, plan)
+                conn.commit()
+                if self.move:
+                    transfer.remove_sources(plan)
+                done += 1
+                self.signals.item_changed.emit(-1)
+            except transfer.TransferError as e:
+                self.signals.warning.emit(str(e))
+            except OSError as e:
+                self.signals.warning.emit(f"{item.title}: {e}")
+        verb = "Moved" if self.move else "Copied"
+        return f"{verb} {done} of {len(self.item_ids)} items to {self.dest_dir}"
+
+
 class LaunchJob(Job):
     """Play: unpack a zipped image if the emulator needs it, then start the game. Runs
     outside the job queue, so a long scan never delays it."""
@@ -280,14 +314,19 @@ class LaunchJob(Job):
                 la.command = [image if part == la.unzip else part.replace(la.unzip, image)
                               for part in la.command]
             self.signals.progress.emit(f"Starting {la.what}…")
-            launcher.start(la)
+            proc = launcher.start(la)
+            if proc is not None and la.episode is None:
+                launcher.watch_session(proc, la.item_id)  # adds to play time when it exits
         except launcher.LaunchError as e:
             self.signals.warning.emit(str(e))
             return f"Couldn't start {la.what}"
         except OSError as e:
             self.signals.warning.emit(f"Couldn't start {la.what}: {e}")
             return f"Couldn't start {la.what}"
-        launcher.record(conn, la.item_id)
+        if la.episode is not None:
+            launcher.record_watch(conn, la.item_id, *la.episode)
+        else:
+            launcher.record(conn, la.item_id)
         conn.commit()
         self.signals.item_changed.emit(la.item_id)
         return f"Started {la.what}"

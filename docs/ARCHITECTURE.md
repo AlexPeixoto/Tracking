@@ -17,6 +17,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `library.py` | Changes the *user* makes (edit, move, remove, complete). The UI calls these; it never writes SQL |
 | `archive.py` | Export / import of the library as a zip (replace or merge) |
 | `launcher.py` | Play: the command for an item (PC .exe, emulator + argument template, steam://), unzipping images to a cache, recording launches |
+| `transfer.py` | Copy / move an item's files to another folder or drive (verified before deleting), re-link or link the copy (`copy_of`), and keep `item_history` |
 | `completions.py` | The Completed log: one row per time you finished something (marking an item completed adds today; year CSVs `name, DD/MM/YYYY` and manual entries add rows outside the library, with their own cover). Editing, ordering, CSV import/export |
 | `volumes.py` | Drive identity: volume GUID + serial, UNC shares, Linux UUIDs; resolves where a drive is mounted now |
 | **Tables** | |
@@ -39,7 +40,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `enrich.py` | Runs the registered services for an item, merges results, saves scores / cover / episodes |
 | `providers/__init__.py` | The registry: which services exist and their priority |
 | `providers/base.py` | `Query`, `Provider`, `Metadata`, `Episode`, HTTP session, cache, rate limiter, fuzzy matching |
-| `providers/<service>.py` | One module per service (anidb, mal, anilist, kitsu, omdb, tmdb, tvmaze, trakt, rawg, igdb, hltb, opencritic, steam) |
+| `providers/<service>.py` | One module per service (anidb, mal, anilist, kitsu, omdb, tmdb, tvmaze, trakt, rawg, igdb, hltb, libretro, opencritic, steam) |
 | **UI** `ui/` | |
 | `ui/main_window.py` | Sidebar (library sections, Steam, Want to acquire), grid, job queue, toolbar |
 | `ui/grid.py` | Poster cards (score chips, average, badges) |

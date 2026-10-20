@@ -58,6 +58,18 @@ class SettingsDialog(QDialog):
             self.workers.setValue(workers.metadata_workers(conn))
             self.workers.setSuffix(" at a time")
             gform.addRow("Metadata downloads", self.workers)
+            player_row = QHBoxLayout()
+            self.player = QLineEdit(db.get_setting(conn, launcher.PLAYER_KEY))
+            self.player.setPlaceholderText("System default (or mpv / VLC / MPC-HC…)")
+            pick_player = QPushButton("Browse…")
+            pick_player.clicked.connect(lambda: self._pick_emulator(self.player, "videos"))
+            self.player_args = QLineEdit(db.get_setting(conn, launcher.PLAYER_ARGS_KEY))
+            self.player_args.setPlaceholderText('"{file}"')
+            self.player_args.setMaximumWidth(160)
+            player_row.addWidget(self.player, 1)
+            player_row.addWidget(pick_player)
+            player_row.addWidget(self.player_args)
+            gform.addRow("Video player", player_row)
             hint = QLabel("How many items to fetch ratings and covers for in parallel. Each site's "
                           "own speed limit is still respected, so more doesn't hit any site harder; "
                           "1 = one by one.")
@@ -140,6 +152,8 @@ class SettingsDialog(QDialog):
             db.set_setting(conn, "log_level", self.level.currentData())
             db.set_setting(conn, "metadata_workers", str(self.workers.value()))
             db.set_setting(conn, "offline_style", self.offline_style.currentData())
+            db.set_setting(conn, launcher.PLAYER_KEY, self.player.text().strip())
+            db.set_setting(conn, launcher.PLAYER_ARGS_KEY, self.player_args.text().strip())
             for plat, (path, args, unzip) in self.emulators.items():
                 db.set_setting(conn, launcher.emulator_key(plat), path.text().strip())
                 db.set_setting(conn, launcher.emulator_args_key(plat), args.text().strip())

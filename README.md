@@ -43,6 +43,13 @@ remembers what you've finished, even when the drive is unplugged.
 - 🎮 **Steam accounts**: your owned games with **time played**, in their own section.
 - 🔎 **Find match**: if something found the wrong thing (or nothing), search every service
   with any name and pick the right result.
+- 📺 **Watch from the library**: *Play next* opens the next episode in your player, double-click
+  any episode to play it; cards show "Ep 7 / 24" and **Continue watching** lists what you're in
+  the middle of.
+- 🚚 **Copy / move to another drive** (e.g. external → SSD before playing): the library follows,
+  with a history of where things went.
+- 🖼️ **Box art for consoles without a key**, from the libretro thumbnail collection, plus
+  play-time tracking for games you start from here.
 - 💽 **Reads game discs like an emulator**: PS1/PS2 serials (named via PCSX2's database),
   PSP/PS3 `PARAM.SFO`, Wii/GameCube headers, even inside `.zip` files.
 - 🔌 **Drives are tracked by id, not letter**: unplug a disk and its items stay, dimmed;
@@ -112,6 +119,8 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 | **▶ Play** | On a game's page or right-click (Ctrl+Enter in the grid). Emulators: Settings › Emulators |
 | **Find match…** | On an item's page or right-click: search by hand and pick the right result |
 | **Hide offline** | Hide what's on unplugged drives; drives are re-checked every 25 s |
+| **Include Steam** | Show Steam games in All items / Games too (a game you also have on disk shows once) |
+| **Copy to… / Move to…** | Right-click: copy or move items to a folder; the library follows |
 
 <details>
 <summary>Keyboard</summary>

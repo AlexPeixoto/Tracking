@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 
 from PySide6.QtCore import QSize, Qt, QThreadPool, QTimer, QUrl
@@ -13,14 +14,14 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from .. import categories, completions, db, launcher, library, platforms, scan, volumes
+from .. import categories, completions, db, launcher, library, platforms, scan, titles, volumes
 from ..scan import install
 from ..sources import steam
 from . import dialogs
 from .completed_page import CompletedPage
 from .grid import OFFLINE_TEXT, CardDelegate, ItemModel, ItemRole
 from .item_page import ItemPage
-from .workers import CompletionCoversJob, LaunchJob, EnrichJob, Job, ScanJob
+from .workers import CompletionCoversJob, LaunchJob, TransferJob, EnrichJob, Job, ScanJob
 
 SECTIONS = [(c.key, c.label) for c in categories.CATEGORIES]
 SORTS = [("title", "Title"), ("avg", "Score: average"), ("best", "Score: highest"),
@@ -31,6 +32,7 @@ NavRole = Qt.UserRole + 10
 WANT = "want"  # sidebar navigation: (WANT, category or None) is the "Want to acquire" list
 COMPLETED = "completed"  # sidebar navigation: (COMPLETED, year or None)
 FOCUS = "focus"  # (FOCUS, heading): a list picked elsewhere (Library health › Show)
+WATCHING = "watching"  # sidebar navigation: (WATCHING, None), series you're partway through
 BACKLOG = "backlog"  # sidebar navigation: (BACKLOG, category or None), owned and not finished
 STEAM = "steam"  # sidebar navigation: (STEAM, None) is the games of your Steam accounts
 
@@ -43,6 +45,12 @@ def view_of(item: db.Item) -> str | None:
 def in_backlog(item: db.Item) -> bool:
     """Yours (on disk or marked as got), not finished, not gone missing."""
     return view_of(item) is None and not item.completed and not item.missing
+
+
+def watching(item: db.Item) -> bool:
+    """A series you've started from here and not finished."""
+    return (view_of(item) is None and item.last_episode is not None and not item.completed
+            and item.kind != "movie" and item.last_episode < item.video_count)
 
 
 def played_order(item: db.Item) -> tuple:
@@ -162,6 +170,7 @@ class MainWindow(QMainWindow):
             hide_missing = db.get_setting(conn, "hide_missing") == "1"
             hide_no_cover = db.get_setting(conn, "hide_no_cover") == "1"
             hide_offline = db.get_setting(conn, "hide_offline") == "1"
+            include_steam = db.get_setting(conn, "include_steam") == "1"
             install_filter = db.get_setting(conn, "install_filter")
         self.install = QComboBox()
         self.install.setToolTip("Games: installed, still an installer, or a console ROM / disc")
@@ -174,6 +183,10 @@ class MainWindow(QMainWindow):
         self.hide_offline.setToolTip("Hide items on drives that aren't connected "
                                      "(drives are checked every 25 s)")
         self.hide_offline.setChecked(hide_offline)
+        self.include_steam = QCheckBox("Include Steam")
+        self.include_steam.setToolTip("Show your Steam games in All items and Games too (a game "
+                                      "that's also on your drives shows once)")
+        self.include_steam.setChecked(include_steam)
         self.hide_no_cover = QCheckBox("Hide no cover")
         self.hide_no_cover.setToolTip("Hide items that have no cover image")
         self.hide_no_cover.setChecked(hide_no_cover)
@@ -182,7 +195,8 @@ class MainWindow(QMainWindow):
         self.hide_missing = QCheckBox("Hide missing")
         self.hide_missing.setChecked(hide_missing)
         for cb, key in ((self.hide_done, "hide_completed"), (self.hide_missing, "hide_missing"),
-                        (self.hide_no_cover, "hide_no_cover"), (self.hide_offline, "hide_offline")):
+                        (self.hide_no_cover, "hide_no_cover"), (self.hide_offline, "hide_offline"),
+                        (self.include_steam, "include_steam")):
             cb.toggled.connect(lambda on, key=key: self._save_filter(key, on))
         head.addWidget(self.heading)
         self.add_btn = QPushButton("+ Add…")
@@ -200,6 +214,7 @@ class MainWindow(QMainWindow):
         head.addWidget(self.hide_missing)
         head.addWidget(self.hide_no_cover)
         head.addWidget(self.hide_offline)
+        head.addWidget(self.include_steam)
         head.addWidget(self.install)
         head.addSpacing(8)
         head.addWidget(self.search)
@@ -260,6 +275,7 @@ class MainWindow(QMainWindow):
         self.page.open_folder.connect(self.open_item)
         self.page.play.connect(self.play)
         self.page.find_match.connect(self.find_match)
+        self.page.play_episode.connect(self.play_episode)
         self.page.deleted.connect(self._item_deleted)
         self.stack.addWidget(self.page)
 
@@ -293,6 +309,29 @@ class MainWindow(QMainWindow):
             if self.stack.currentIndex() == 1:
                 self.show_item(item_id)
 
+    def transfer(self, ids: list[int], move: bool):
+        """Copy / move items to a folder you pick; the library follows (history kept)."""
+        items = [i for i in (self._find(x) for x in ids) if i and i.source == "disk"]
+        if not items:
+            return
+        what = items[0].title if len(items) == 1 else f"{len(items)} items"
+        dest = QFileDialog.getExistingDirectory(self, f"{'Move' if move else 'Copy'} {what} to…")
+        if not dest:
+            return
+        size = sum(i.size_bytes or 0 for i in items)
+        try:
+            free = shutil.disk_usage(dest).free
+        except OSError:
+            free = 0
+        detail = (f"{size / 1e9:.1f} GB to {dest} ({free / 1e9:.0f} GB free there).\n\n"
+                  + ("The originals are deleted once the copy is verified; completion, notes and "
+                     "history move with them." if move else
+                     "Both copies stay in your library, linked as copies of one another."))
+        if QMessageBox.question(self, "Move" if move else "Copy",
+                                f"{'Move' if move else 'Copy'} {what}?\n\n{detail}") != QMessageBox.Yes:
+            return
+        self.start_job(TransferJob([i.id for i in items], dest, move, dict(self.mounts)))
+
     def _play_selected(self):
         ids = self._selected_ids()
         if ids:
@@ -303,12 +342,54 @@ class MainWindow(QMainWindow):
         item = self._find(item_id)
         if not item:
             return
+        if item.category in ("anime", "tv", "movie"):
+            self._play_video(item)
+            return
         try:
             with db.session() as conn:
                 la = launcher.plan(conn, item, self.mounts.get(item.volume_uid))
         except launcher.LaunchError as e:
             QMessageBox.information(self, "Play", str(e))
             return
+        self._start_launch(la)
+
+    def _play_video(self, item: db.Item, file=None):
+        """Play next / a given episode in the video player; ask once everything was played."""
+        with db.session() as conn:
+            if file is None:
+                file = launcher.next_episode(conn, item)
+                if file is None:
+                    files = launcher.episode_files(conn, item.id)
+                    if not files:
+                        QMessageBox.information(self, "Play", f"No video files for {item.title}.")
+                        return
+                    verb = categories.get(item.category).done.lower()
+                    if not item.completed and QMessageBox.question(
+                            self, "Play", f"You've played every episode of {item.title}. "
+                            f"Mark it as {verb}?") == QMessageBox.Yes:
+                        self.set_completed([item.id], True)
+                        return
+                    file = files[0]  # start over
+            try:
+                la = launcher.plan_video(conn, item, self.mounts.get(item.volume_uid), file)
+            except launcher.LaunchError as e:
+                QMessageBox.information(self, "Play", str(e))
+                return
+        self._start_launch(la)
+
+    def play_episode(self, item_id: int, season, episode):
+        item = self._find(item_id)
+        if not item:
+            return
+        with db.session() as conn:
+            files = launcher.episode_files(conn, item_id)
+        file = next((f for f in files if f.episode == episode and (f.season or 1) == (season or 1)), None)
+        if file is None:
+            QMessageBox.information(self, "Play", f"Episode {episode} isn't in your files.")
+            return
+        self._play_video(item, file)
+
+    def _start_launch(self, la):
         job = LaunchJob(la)
         job.signals.progress.connect(self._show_progress)
         job.signals.warning.connect(lambda text: QMessageBox.warning(self, "Play", text))
@@ -323,6 +404,14 @@ class MainWindow(QMainWindow):
         with db.session() as conn:
             db.set_setting(conn, "install_filter", self.install.currentData() or "")
         self.apply_filter()
+
+    def _steam_duplicates(self) -> set[int]:
+        """Steam games that are also in the library (same app id or title): shown once."""
+        lib = [i for i in self.all_items if view_of(i) is None and i.category == "game"]
+        appids = {i.steam_appid for i in lib if i.steam_appid}
+        keys = {titles.normalize(titles.front_article(i.title)) for i in lib}
+        return {i.id for i in self.all_items if view_of(i) == STEAM and (
+            i.steam_appid in appids or titles.normalize(titles.front_article(i.title)) in keys)}
 
     def _offline(self, item: db.Item) -> bool:
         """On a drive that isn't connected (Steam / wish-list items never are)."""
@@ -436,6 +525,19 @@ class MainWindow(QMainWindow):
                         current = child
                 node.setExpanded(True)
 
+        # Continue watching: series you're partway through (only when there are some).
+        started = sum(1 for i in self.all_items if watching(i))
+        if started or self.nav[0] == WATCHING:
+            node = QTreeWidgetItem([f"Continue watching   {started}"])
+            node.setData(0, NavRole, (WATCHING, None))
+            f = node.font(0)
+            f.setBold(True)
+            node.setFont(0, f)
+            node.setToolTip(0, "Series you've started playing from here, most recent first")
+            self.sidebar.addTopLevelItem(node)
+            if self.nav == (WATCHING, None):
+                current = node
+
         # Backlog: what you have and haven't finished yet, per section.
         backlog: dict[str, int] = {}
         for i in self.all_items:
@@ -540,6 +642,17 @@ class MainWindow(QMainWindow):
         if self.nav[0] == FOCUS:
             self._apply_focus()
             return
+        if self.nav[0] == WATCHING:
+            items = sorted((i for i in self.all_items if watching(i)),
+                           key=lambda i: i.last_watched or "", reverse=True)
+            self.heading.setText("Continue watching")
+            self.add_btn.hide()
+            self.install.hide()
+            self.include_steam.hide()
+            self.count.setText(f"{len(items)} in progress")
+            self.count.setToolTip("Enter opens a series, Ctrl+Enter plays its next episode")
+            self.model.set_items(items)
+            return
         backlog_view = self.nav[0] == BACKLOG
         view = self.nav[0] if self.nav[0] in (WANT, STEAM) else None
         wanted_view, steam_view = view == WANT, view == STEAM
@@ -551,9 +664,15 @@ class MainWindow(QMainWindow):
         games_view = category == "game"
         self.install.setVisible(games_view)
         inst = self.install.currentData() if games_view else ""
+        library_view = view is None and not backlog_view
+        self.include_steam.setVisible(library_view and category in (None, "game")
+                                      and any(view_of(i) == STEAM for i in self.all_items))
+        with_steam = library_view and self.include_steam.isChecked()
+        dupes = self._steam_duplicates() if with_steam else set()
         items = [
             i for i in self.all_items
-            if view_of(i) == view
+            if (view_of(i) == view
+                or (with_steam and view_of(i) == STEAM and i.id not in dupes))
             and (not backlog_view or in_backlog(i))
             and (not category or i.category == category)
             and (not platform or (i.platform or db.UNKNOWN_PLATFORM) == platform)
@@ -627,7 +746,10 @@ class MainWindow(QMainWindow):
         self.model.set_items(items)
 
     def open_health(self):
-        dlg = dialogs.HealthDialog(self.all_items, self)
+        with db.session() as conn:
+            copies = {r["id"]: r["copy_of"] for r in conn.execute(
+                "SELECT id, copy_of FROM items WHERE copy_of IS NOT NULL")}
+        dlg = dialogs.HealthDialog(self.all_items, self, copies)
         dlg.show_items.connect(self.show_focus)
         dlg.refetch.connect(lambda ids: self.start_job(EnrichJob(ids, force=True)))
         dlg.exec()
@@ -829,6 +951,9 @@ class MainWindow(QMainWindow):
             if items[0].category == "game":
                 menu.addAction("▶  Play" if items[0].install_state != install.INSTALLER
                                else "▶  Run setup", lambda: self.play(ids[0]))
+            elif items[0].video_count and items[0].category in ("anime", "tv", "movie"):
+                menu.addAction("▶  Play" if items[0].kind == "movie" else "▶  Play next",
+                               lambda: self.play(ids[0]))
             menu.addAction("Open details", lambda: self.show_item(ids[0]))
             menu.addAction("Find match…", lambda: self.find_match(ids[0]))
             menu.addAction("Open folder" if items[0].source == "disk" else "Open web page",
@@ -840,6 +965,10 @@ class MainWindow(QMainWindow):
             menu.addAction("Mark as not completed", lambda: self.set_completed(ids, False))
         menu.addAction("Refetch metadata", lambda: self.start_job(EnrichJob(ids, force=True)))
         menu.addMenu(self._move_menu(ids))
+        if any(i.source == "disk" for i in items):
+            menu.addSeparator()
+            menu.addAction("Copy to…", lambda: self.transfer(ids, move=False))
+            menu.addAction("Move to…", lambda: self.transfer(ids, move=True))
         menu.exec(self.grid.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------ want to acquire

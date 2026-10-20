@@ -241,7 +241,9 @@ class CardDelegate(QStyledItemDelegate):
         elif item.kind == "movie" and item.category in ("anime", "unknown"):
             meta.insert(0, "Movie")
         elif item.video_count > 1:
-            meta.insert(0, f"{item.video_count} eps")
+            # "Ep 7 / 24" once you've started it from here
+            meta.insert(0, f"Ep {item.last_episode} / {item.video_count}" if item.last_episode
+                        else f"{item.video_count} eps")
         if item.avg_score is not None:
             meta.insert(0, f"★ {item.avg_score / 10:.1f}")  # average of all scores, out of 10
         p.setFont(option.font)

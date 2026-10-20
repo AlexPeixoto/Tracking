@@ -147,6 +147,13 @@ CREATE TABLE IF NOT EXISTS completions (
     notes        TEXT,
     added_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- What happened to an item's files: copied / moved between drives (transfer.py).
+CREATE TABLE IF NOT EXISTS item_history (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    at      TEXT NOT NULL,
+    action  TEXT NOT NULL,
+    detail  TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS completions_year ON completions(substr(completed_on, 1, 4));
 """
 
@@ -168,6 +175,12 @@ MIGRATIONS = [
     ("items", "launch_args", "TEXT"),       # extra command-line arguments
     ("items", "last_launched", "TEXT"),     # last time Play started it
     ("items", "launch_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("items", "last_episode", "INTEGER"),   # series: last episode played from here
+    ("items", "last_episode_season", "INTEGER"),
+    ("items", "last_watched", "TEXT"),      # when it was played
+    ("items", "playtime_local_min", "REAL"),  # time in games started from Tracking
+    ("completions", "hours", "REAL"),
+    ("items", "copy_of", "INTEGER"),        # a copy made with Copy to… (of this item)       # play time when you finished it (Steam / timed)
 ]
 
 
@@ -287,6 +300,9 @@ class Item:
     launch_args: str | None = None
     last_launched: str | None = None
     launch_count: int = 0
+    last_episode: int | None = None      # series: last episode played from here
+    last_episode_season: int | None = None
+    last_watched: str | None = None
 
     @property
     def avg_score(self) -> float | None:
@@ -313,9 +329,13 @@ SELECT id, volume_uid, rel_path, is_dir,
        title AS detected_title,
        year, file_count, size_bytes, duration_sec, hltb_hours, hltb_extra, hltb_complete,
        completed, completed_at, notes, kind, season, detected_how,
-       source, steam_appid, playtime_min, last_played,
+       source, steam_appid,
+       -- Steam's play time plus sessions of games started from Tracking
+       CASE WHEN playtime_min IS NULL AND playtime_local_min IS NULL THEN NULL
+            ELSE COALESCE(playtime_min, 0) + COALESCE(playtime_local_min, 0) END AS playtime_min,
+       last_played,
        install_state, COALESCE(user_launch, launch_path) AS launch_path, launch_args,
-       last_launched, launch_count,
+       last_launched, launch_count, last_episode, last_episode_season, last_watched,
        rating, rating_max, rating_source, external_url, poster, summary, missing,
        (SELECT COUNT(*) FROM media_files m WHERE m.item_id = items.id) AS video_count
 FROM items
@@ -353,6 +373,9 @@ def row_to_item(row: sqlite3.Row) -> Item:
         launch_args=row["launch_args"],
         last_launched=row["last_launched"],
         launch_count=row["launch_count"] or 0,
+        last_episode=row["last_episode"],
+        last_episode_season=row["last_episode_season"],
+        last_watched=row["last_watched"],
         rating=row["rating"],
         rating_max=row["rating_max"],
         rating_source=row["rating_source"],

@@ -213,7 +213,10 @@ def on_items_completed(conn: sqlite3.Connection, item_ids: list[int], done: bool
         if done:
             if not conn.execute("SELECT 1 FROM completions WHERE item_id=? AND completed_on=?",
                                 (item_id, today())).fetchone():
-                add(conn, item.title, today(), item.category, item.platform, item_id=item_id)
+                cid = add(conn, item.title, today(), item.category, item.platform, item_id=item_id)
+                if item.playtime_min:  # Steam (or timed) play time when you finished it
+                    conn.execute("UPDATE completions SET hours=? WHERE id=?",
+                                 (round(item.playtime_min / 60, 1), cid))
         else:
             row = conn.execute("SELECT id FROM completions WHERE item_id=? "
                                "ORDER BY completed_on DESC, id DESC LIMIT 1", (item_id,)).fetchone()
@@ -415,7 +418,7 @@ def year_stats(conn: sqlite3.Connection, year: int | None) -> YearStats:
     where, args = ("WHERE substr(c.completed_on, 1, 4) = ?", (f"{year:04d}",)) if year else ("", ())
     s = YearStats()
     for r in conn.execute(
-            f"SELECT c.category, c.completed_on, i.playtime_min, i.hltb_hours, i.duration_sec "
+            f"SELECT c.category, c.completed_on, c.hours, i.playtime_min, i.hltb_hours, i.duration_sec "
             f"FROM completions c LEFT JOIN items i ON i.id = c.item_id {where}", args):
         s.count += 1
         s.by_category[r["category"]] = s.by_category.get(r["category"], 0) + 1
@@ -423,7 +426,9 @@ def year_stats(conn: sqlite3.Connection, year: int | None) -> YearStats:
             s.by_month[int(r["completed_on"][5:7]) - 1] += 1
         else:
             s.undated += 1
-        if r["category"] == "game":
+        if r["hours"]:  # what it took when you finished it
+            h = r["hours"]
+        elif r["category"] == "game":
             h = (r["playtime_min"] or 0) / 60 or r["hltb_hours"]
         else:
             h = (r["duration_sec"] or 0) / 3600

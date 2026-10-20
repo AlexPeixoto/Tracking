@@ -15,7 +15,7 @@ class HealthDialog(QDialog):
     show_items = Signal(str, list)     # heading, item ids
     refetch = Signal(list)             # item ids
 
-    def __init__(self, items, parent=None):
+    def __init__(self, items, parent=None, copies=None):
         super().__init__(parent)
         self.setWindowTitle("Library health")
         self.setMinimumWidth(620)
@@ -28,7 +28,7 @@ class HealthDialog(QDialog):
         grid = QGridLayout()
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(10)
-        for row, check in enumerate(library.health(items)):
+        for row, check in enumerate(library.health(items, copies)):
             n = len(check.ids)
             count = QLabel(f"<span style='font-size:15pt; font-weight:600'>{n}</span>")
             count.setAlignment(Qt.AlignRight | Qt.AlignVCenter)

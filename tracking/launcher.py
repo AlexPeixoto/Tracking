@@ -19,6 +19,8 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
+import time
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -79,6 +81,7 @@ class Launch:
     cwd: str | None = None
     url: str | None = None
     unzip: str | None = None                # a .zip to unpack first; {file} becomes the image
+    episode: tuple | None = None            # videos: (season, episode) to remember as watched
 
 
 def target_path(item: db.Item, mount: str | None) -> str | None:
@@ -187,19 +190,46 @@ def _trim_cache(cache, keep) -> None:
         shutil.rmtree(old, ignore_errors=True)
 
 
-def start(launch: Launch) -> None:
-    """Start it, detached from Tracking (closing the app doesn't close the game)."""
+def start(launch: Launch) -> subprocess.Popen | None:
+    """Start it, detached from Tracking (closing the app doesn't close the game).
+    Returns the process to time the session with (None for Steam URLs)."""
     if launch.url:
         if sys.platform == "win32":
             os.startfile(launch.url)  # noqa: S606 - the user asked to play this
         else:
             subprocess.Popen(["xdg-open", launch.url])
-        return
+        return None
     flags = 0
     if sys.platform == "win32":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     log.info("launching %s: %s", launch.what, subprocess.list2cmdline(launch.command))
-    subprocess.Popen(launch.command, cwd=launch.cwd, creationflags=flags, close_fds=True)
+    return subprocess.Popen(launch.command, cwd=launch.cwd, creationflags=flags, close_fds=True)
+
+
+MIN_SESSION_S = 60  # shorter = a launcher that handed over to the real game, not a session
+
+
+def watch_session(proc: subprocess.Popen, item_id: int, db_file=None) -> threading.Thread:
+    """Time the game until it exits (on a background thread) and add the minutes to the
+    item's play time. Launchers that exit right away don't count."""
+    def run():
+        t0 = time.monotonic()
+        proc.wait()
+        add_session(item_id, time.monotonic() - t0, db_file)
+
+    t = threading.Thread(target=run, name=f"session-{item_id}", daemon=True)
+    t.start()
+    return t
+
+
+def add_session(item_id: int, seconds: float, db_file=None) -> bool:
+    if seconds < MIN_SESSION_S:
+        return False
+    with db.session(db_file) as conn:
+        conn.execute("UPDATE items SET playtime_local_min=COALESCE(playtime_local_min, 0) + ? "
+                     "WHERE id=?", (round(seconds / 60, 1), item_id))
+    log.info("session for item %d: %.0f min", item_id, seconds / 60)
+    return True
 
 
 def record(conn: sqlite3.Connection, item_id: int) -> None:
@@ -218,3 +248,65 @@ def set_launch(conn: sqlite3.Connection, item_id: int, path: str | None, args: s
             stored = volumes._rel(path, mount)
     conn.execute("UPDATE items SET user_launch=?, launch_args=? WHERE id=?",
                  (stored, (args or "").strip() or None, item_id))
+
+
+# --------------------------------------------------------------------------- videos
+
+PLAYER_KEY, PLAYER_ARGS_KEY = "video_player", "video_player_args"
+
+
+@dataclass
+class EpisodeFile:
+    season: int | None
+    episode: int | None
+    rel_path: str
+
+
+def episode_files(conn: sqlite3.Connection, item_id: int) -> list[EpisodeFile]:
+    """An item's video files in watching order (season, episode, then name)."""
+    rows = conn.execute("SELECT season, episode, rel_path FROM media_files WHERE item_id=?",
+                        (item_id,)).fetchall()
+    files = [EpisodeFile(r["season"], r["episode"], r["rel_path"]) for r in rows]
+    return sorted(files, key=lambda f: (f.season or 0, f.episode is None, f.episode or 0, f.rel_path))
+
+
+def next_episode(conn: sqlite3.Connection, item: db.Item) -> EpisodeFile | None:
+    """The one after the last played (the first if none); None once all were played."""
+    files = episode_files(conn, item.id)
+    if not files:
+        return None
+    if item.kind == "movie" or item.category == "movie":
+        return max(files, key=lambda f: conn.execute(
+            "SELECT size_bytes FROM media_files WHERE item_id=? AND rel_path=?",
+            (item.id, f.rel_path)).fetchone()["size_bytes"] or 0)
+    if item.last_episode is None:
+        return files[0]
+    last = (item.last_episode_season or 0, item.last_episode)
+    later = [f for f in files if f.episode is not None and ((f.season or 0), f.episode) > last]
+    return later[0] if later else None
+
+
+def plan_video(conn: sqlite3.Connection, item: db.Item, mount: str | None,
+               file: EpisodeFile) -> Launch:
+    if not mount:
+        raise LaunchError(f"{item.title} is on a drive that isn't connected.")
+    path = volumes.join(mount, file.rel_path)
+    if not os.path.exists(path):
+        raise LaunchError(f"{path} isn't there anymore. Rescan the location.")
+    label = item.title + (f" · episode {file.episode}" if file.episode is not None
+                          and item.kind != "movie" else "")
+    player = db.get_setting(conn, PLAYER_KEY)
+    if player:
+        if not os.path.exists(player):
+            raise LaunchError(f"The video player isn't at {player} anymore (Settings › General).")
+        template = db.get_setting(conn, PLAYER_ARGS_KEY) or '"{file}"'
+        la = Launch(item.id, label, build_command(player, template, path), cwd=os.path.dirname(path))
+    else:
+        la = Launch(item.id, label, url=path)  # the system's default player
+    la.episode = (file.season, file.episode)
+    return la
+
+
+def record_watch(conn: sqlite3.Connection, item_id: int, season: int | None, episode: int | None) -> None:
+    conn.execute("UPDATE items SET last_episode=?, last_episode_season=?, last_watched=? WHERE id=?",
+                 (episode, season, datetime.now().isoformat(timespec="seconds"), item_id))

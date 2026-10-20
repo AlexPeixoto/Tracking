@@ -31,12 +31,12 @@ A **Play** button on the item page and in the right-click menu.
 - **Steam games**: `steam://rungameid/<appid>`.
 - Drive offline: say which drive to plug in instead of failing.
 
-### ✅ Recently played, for installed games *(sort done; session length still to do)*
+### ✅ Recently played, for installed games *(done, with session length)*
 Record each launch (`items.last_launched`, `launch_count`) and add a
 **Recently played** sort and a *Continue playing* row at the top of Games. Optionally
 track the session length while the process runs, which adds to play time for non-Steam games.
 
-### Copy / move to another drive
+### ✅ Copy / move to another drive *(done)*
 Right-click › **Copy to…** / **Move to…**, asking for the destination folder (e.g. from an
 external disk to the internal SSD before playing).
 - Runs as a background job with progress and cancel; verifies sizes before deleting on
@@ -46,7 +46,7 @@ external disk to the internal SSD before playing).
   the internal copy and *Library health* doesn't flag a duplicate.
 - A per-item **history** ("Moved from Backup (E:) to SSD (C:) on 2026-10-20") on the item page.
 
-### Steam games in All items / Games
+### ✅ Steam games in All items / Games *(done)*
 A setting (and a quick toggle) to **include Steam games** in *All items* and *Games* as
 well as in their own section. A Steam game that's also on disk shows once (the disk item,
 with Steam play time attached).
@@ -55,7 +55,7 @@ with Steam play time attached).
 
 ## 📺 Watching
 
-### Play episodes from the app
+### ✅ Play episodes from the app *(done; resume position with mpv / MPC-HC still to do)*
 **Play** on a series opens the next unwatched episode in your player (system default,
 or mpv / VLC / MPC-HC set in Settings); double-click any episode in the list to play it.
 - Remember the **last played episode** per series (`items.last_episode`, date), shown on
@@ -63,7 +63,7 @@ or mpv / VLC / MPC-HC set in Settings); double-click any episode in the list to 
 - With mpv (IPC) or MPC-HC (web interface): remember the **position** too, and mark an
   episode watched past ~90%.
 
-### Continue watching
+### ✅ Continue watching *(done)*
 A row of series you're partway through, ordered by when you last watched, with *Play next*.
 Finishing the last episode offers to mark the series completed (and log it in Completed).
 
@@ -71,7 +71,7 @@ Finishing the last episode offers to mark the series completed (and log it in Co
 
 ## 🖼️ Library quality
 
-### Console covers without keys (libretro thumbnails)
+### ✅ Console covers without keys (libretro thumbnails) *(done)*
 Match Redump / No-Intro file names against the
 [libretro-thumbnails](https://github.com/libretro-thumbnails) repositories (the box art
 RetroArch uses). Free and keyless, and great for PS1/PS2/PSP/Saturn/Dreamcast/Wii, where
@@ -82,7 +82,7 @@ Re-run the naming rules on the paths already in the database, with no drive need
 instant after a rule fix; only items whose title changes get refetched (your renamed titles
 are left alone). Disc reading and new files still need a Rescan.
 
-### Steam play time on the Completed log
+### ✅ Steam play time on the Completed log *(done)*
 When a Steam game is marked completed, store the hours it took then, for the year stats
 ("312 h, 140 of them in Elden Ring").
 

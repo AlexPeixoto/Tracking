@@ -150,12 +150,13 @@ def export_list(conn: sqlite3.Connection, items: list[db.Item], path: str) -> in
 
 # --------------------------------------------------------------------------- duplicates
 
-def find_duplicates(items: list[db.Item]) -> list[list[db.Item]]:
+def find_duplicates(items: list[db.Item], copies: dict[int, int] | None = None) -> list[list[db.Item]]:
     """Library items that look like the same thing: same section and title (articles
     and punctuation ignored), e.g. a PS2 and a PC copy, or one movie on two drives.
     Biggest groups first; within a group, by platform and path."""
     from . import titles
 
+    copies = copies or {}  # item id -> the item it's a copy of
     groups: dict[tuple, list[db.Item]] = {}
     for i in items:
         if i.source in (db.WANTED, db.STEAM):
@@ -163,8 +164,9 @@ def find_duplicates(items: list[db.Item]) -> list[list[db.Item]]:
         key = (i.category, titles.normalize(titles.front_article(i.title)), i.season)
         if key[1]:
             groups.setdefault(key, []).append(i)
+    # Copies made with "Copy to…" are on purpose: only distinct originals count.
     found = [sorted(g, key=lambda i: (i.platform or "", i.rel_path)) for g in groups.values()
-             if len(g) > 1]
+             if len({copies.get(i.id) or i.id for i in g}) > 1]
     return sorted(found, key=lambda g: (-len(g), g[0].title.lower()))
 
 
@@ -179,11 +181,11 @@ class HealthCheck:
     fetch: bool = False          # "Fetch again" makes sense for these
 
 
-def health(items: list[db.Item]) -> list[HealthCheck]:
+def health(items: list[db.Item], copies: dict[int, int] | None = None) -> list[HealthCheck]:
     """What in the library could use a look, for Library health."""
     lib = [i for i in items if i.source not in (db.WANTED, db.STEAM)]
     present = [i for i in lib if not i.missing]
-    dupes = [i.id for g in find_duplicates(lib) for i in g]
+    dupes = [i.id for g in find_duplicates(lib, copies) for i in g]
     return [
         HealthCheck("no_cover", "No cover", "Nothing found yet. Fetch again retries them all; for one\n"
                     "that stays empty, use Find match… on its page.",
