@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ... import categories, db, library, platforms, scan, volumes
+from ...scan import fs as scan_fs
 from ...sources import steam
 
 # What a location can be set to hold: auto-detect or any section except Unknown.
@@ -346,14 +347,21 @@ class RescanDialog(QDialog):
                 "JOIN volumes v ON v.uid=r.volume_uid ORDER BY v.label, r.rel_path").fetchall()
             for r in rows:
                 mount = scan.mount_for(conn, r["volume_uid"], known)
+                snap = None if mount else scan_fs.info(conn, r["id"])
                 if steam.is_account(r["volume_uid"]):
                     text = f"{r['label']}   — games and play time"
                 else:
                     text = f"{r['label'] or '(no label)'}  /{r['rel_path']}"
-                    text += f"   — {mount}" if mount else "   — offline"
+                    if mount:
+                        text += f"   — {mount}"
+                    elif snap:
+                        text += (f"   — offline: from its snapshot ({snap[1]:,} files, "
+                                 f"{snap[0][:10]})")
+                    else:
+                        text += "   — offline (no snapshot yet: scan it once while connected)"
                 it = QListWidgetItem(text)
                 it.setData(Qt.UserRole, r["id"])
-                if mount:
+                if mount or snap:
                     on = preselect is None or r["id"] in preselect
                     it.setCheckState(Qt.Checked if on else Qt.Unchecked)
                 else:
@@ -369,7 +377,10 @@ class RescanDialog(QDialog):
         self.enrich.setChecked(True)
         lay.addWidget(self.missing_completed)
         lay.addWidget(self.enrich)
-        note = QLabel("Missing items are never deleted: they stay in the library, flagged as missing.")
+        note = QLabel("Missing items are never deleted: they stay in the library, flagged as missing. "
+                      "Unplugged drives are re-processed from their snapshot (what their last scan "
+                      "saw), so new detection rules apply without plugging them in; new or deleted "
+                      "files show up once you rescan with the drive connected.")
         note.setObjectName("Muted")
         note.setWordWrap(True)
         lay.addWidget(note)

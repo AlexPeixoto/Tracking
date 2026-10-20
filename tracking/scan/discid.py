@@ -151,6 +151,15 @@ def _nintendo(head: bytes) -> DiscInfo | None:
 # --------------------------------------------------------------------------- entry point
 
 def identify(path: str, name_lookup=None) -> DiscInfo | None:
+    """What the disc says about itself; from the snapshot when re-processing one."""
+    if name_lookup is not None:
+        return identify_real(path, name_lookup)
+    from . import fs
+
+    return fs.current().disc_info(path)
+
+
+def identify_real(path: str, name_lookup=None) -> DiscInfo | None:
     """What the disc image at ``path`` (or the image inside that .zip) says about itself.
     ``name_lookup(serial)`` names PS2 discs (defaults to PCSX2's GameIndex)."""
     try:

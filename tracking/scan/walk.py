@@ -16,7 +16,7 @@ import os
 from collections.abc import Callable, Iterator
 
 from .. import titles
-from . import classify, discid, install
+from . import classify, discid, fs, install
 from .classify import ARCHIVE_EXT, DISC_EXT, ROM_EXT, VIDEO_EXT, Hints
 from .model import GROUP_SEP, FileEntry, FoundItem, vol_rel
 from .videos import (
@@ -43,7 +43,8 @@ def _is_sample(name: str) -> bool:
 def _gather(dir_abs: str, dir_rel: str):
     """All files under an item folder: (inner rel, abs) pairs, (video, inner) pairs, count, bytes."""
     pairs, videos, count, total = [], [], 0, 0
-    for cur, dirs, files in os.walk(dir_abs, onerror=lambda e: None):
+    disk = fs.current()
+    for cur, dirs, files in disk.walk(dir_abs):
         dirs[:] = [d for d in dirs if not classify.is_skipped(d)]
         inner = os.path.relpath(cur, dir_abs).replace("\\", "/")
         inner = "" if inner == "." else inner
@@ -52,7 +53,7 @@ def _gather(dir_abs: str, dir_rel: str):
                 continue
             p = os.path.join(cur, f)
             try:
-                st = os.stat(p)
+                st = disk.stat(p)
             except OSError:
                 continue
             count += 1
@@ -95,8 +96,8 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
     extra: list[FoundItem] = []
     if strays:
         log.debug("%s: %d files belong to other games: %s", dir_rel, len(strays), sorted(strays))
-        with os.scandir(dir_abs) as it:
-            extra = list(_loose_items([e for e in it if e.name in strays], dir_rel, hints))
+        extra = list(_loose_items([e for e in fs.current().scandir(dir_abs) if e.name in strays],
+                                  dir_rel, hints))
         pairs = [p for p in pairs if p[0] not in strays]
         count -= len(strays)
         total -= sum(i.size_bytes for i in extra)
@@ -206,10 +207,7 @@ def _launch_candidates(pairs: list[tuple[str, str]]) -> list[tuple[str, int]]:
 
 
 def _size(path: str) -> int:
-    try:
-        return os.path.getsize(path)
-    except OSError:
-        return 0
+    return fs.current().getsize(path)
 
 
 def _folder_title(fallback: str, dir_rel: str) -> str:
@@ -223,8 +221,8 @@ def _folder_title(fallback: str, dir_rel: str) -> str:
 
 def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iterator[FoundItem]:
     vids: list[tuple[FileEntry, str]] = []
-    game_groups: dict[str, list[os.DirEntry]] = {}
-    stats: dict[str, os.stat_result] = {}
+    game_groups: dict[str, list[fs.Entry]] = {}
+    stats: dict[str, fs.Stat] = {}
     for e in entries:
         ext = os.path.splitext(e.name)[1].lower()
         stem = os.path.splitext(e.name)[0]
@@ -302,12 +300,11 @@ def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iter
 
 def _has_keyword_child(dir_abs: str) -> bool:
     try:
-        with os.scandir(dir_abs) as it:
-            for e in it:
-                if e.is_dir(follow_symlinks=False) and (
-                    classify.platform_from_name(e.name) or classify.category_from_name(e.name)
-                ):
-                    return True
+        for e in fs.current().scandir(dir_abs):
+            if e.is_dir(follow_symlinks=False) and (
+                classify.platform_from_name(e.name) or classify.category_from_name(e.name)
+            ):
+                return True
     except OSError:
         pass
     return False
@@ -322,15 +319,14 @@ def _looks_like_container(dir_abs: str) -> bool:
     """
     subdirs, has_exe = 0, False
     try:
-        with os.scandir(dir_abs) as it:
-            for e in it:
-                if e.is_dir(follow_symlinks=False):
-                    n = e.name
-                    if not (classify.is_skipped(n) or classify.is_junk_subdir(n)
-                            or titles.season_from_dir(n) is not None or n.lower() in EXTRA_DIRS):
-                        subdirs += 1
-                elif e.name.lower().endswith(".exe"):
-                    has_exe = True
+        for e in fs.current().scandir(dir_abs):
+            if e.is_dir(follow_symlinks=False):
+                n = e.name
+                if not (classify.is_skipped(n) or classify.is_junk_subdir(n)
+                        or titles.season_from_dir(n) is not None or n.lower() in EXTRA_DIRS):
+                    subdirs += 1
+            elif e.name.lower().endswith(".exe"):
+                has_exe = True
     except OSError:
         return False
     return subdirs >= 5 or (subdirs >= 3 and not has_exe)
@@ -344,8 +340,7 @@ def walk(dir_abs: str, dir_rel: str, hints: Hints, depth: int = 0,
          progress: Callable[[str], None] | None = None,
          cancelled: Callable[[], bool] = lambda: False) -> Iterator[FoundItem]:
     try:
-        with os.scandir(dir_abs) as it:
-            entries = sorted(it, key=lambda e: e.name.lower())
+        entries = sorted(fs.current().scandir(dir_abs), key=lambda e: e.name.lower())
     except OSError as e:
         log.warning("can't read %s: %s", dir_abs, e)
         return

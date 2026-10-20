@@ -110,7 +110,7 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 
 | | |
 |---|---|
-| **F5** · Rescan | Pick locations; optionally mark items no longer found as completed |
+| **F5** · Rescan | Pick locations; optionally mark items no longer found as completed. Unplugged drives are re-processed from their snapshot |
 | **Update metadata** | Fetch what's missing (items without a cover are retried) |
 | **Ctrl+N** | Add to *Want to acquire*, or a *Completed* entry when you're there |
 | **Right-click** | Move to another section / platform, complete, refetch, remove |
@@ -238,6 +238,10 @@ shows *why* it was detected the way it was.
 - An unplugged drive's items stay (dimmed, or with a small icon; your choice in Settings).
 - Removing a location asks whether to keep its items.
 - Moved files are re-linked, keeping their completed state and notes.
+- **Snapshots:** every scan saves what the drive looked like (folder listings and disc
+  headers, ~70 bytes per file). After an update to the detection rules, Rescan re-processes
+  unplugged drives from their snapshot, so you don't need to plug every disk back in. New or
+  deleted files still need a real scan.
 - Missing items are never deleted; Rescan can mark them completed instead.
 </details>
 

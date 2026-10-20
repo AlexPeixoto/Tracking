@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-import os
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
 
 from .. import db, paths, titles, volumes
+from . import fs
 from .merge import collect
 from .model import FoundItem, ScanResult, VolumeOffline, fs_path
 from .walk import root_hints
@@ -54,40 +54,66 @@ def mount_for(conn: sqlite3.Connection, volume_uid: str,
     return None
 
 
+class NoSnapshot(Exception):
+    """The location was never scanned with this version, so there's nothing to replay."""
+
+
 def scan_root(conn: sqlite3.Connection, root_id: int,
               progress: Callable[[str], None] | None = None,
               cancelled: Callable[[], bool] = lambda: False,
-              missing_completed: bool = False) -> ScanResult:
+              missing_completed: bool = False, from_snapshot: bool = False) -> ScanResult:
     """Scan one location. Items no longer on disk are flagged ``missing`` (never
     deleted); with ``missing_completed`` they are also marked as completed, on the
-    idea that you delete things once you've watched / finished them."""
+    idea that you delete things once you've watched / finished them.
+
+    A real scan records the location's snapshot; ``from_snapshot`` re-processes that
+    record instead of the drive (new detection rules, drive not needed)."""
     root = conn.execute("SELECT * FROM roots WHERE id=?", (root_id,)).fetchone()
     if root["volume_uid"].startswith(ACCOUNT_PREFIX):
         from ..sources import steam
         return steam.sync(conn, root_id, progress=progress, cancelled=cancelled)
-    mount = mount_for(conn, root["volume_uid"])
-    if not mount:
-        raise VolumeOffline(root["volume_uid"])
-    root_abs = volumes.join(mount, root["rel_path"])
+    if from_snapshot:
+        # Where the drive was last seen (only used to name paths; nothing is read there).
+        r = conn.execute("SELECT last_mount FROM volumes WHERE uid=?", (root["volume_uid"],)).fetchone()
+        mount = (r and r["last_mount"]) or f"\\\\snapshot\\{root['volume_uid'][:8]}\\"
+        root_abs = volumes.join(mount, root["rel_path"])
+        disk = fs.load(conn, root_id, root_abs)
+        if disk is None:
+            raise NoSnapshot(root_id)
+        disk.volume_uid, disk.mount = root["volume_uid"], mount
+    else:
+        mount = mount_for(conn, root["volume_uid"])
+        if not mount:
+            raise VolumeOffline(root["volume_uid"])
+        root_abs = volumes.join(mount, root["rel_path"])
+        disk = fs.RecordingFS(root_abs)
     hints = root_hints(root["category"], root["platform"], root["rel_path"])
     now = datetime.now(UTC).isoformat(timespec="seconds")
 
-    log.info("scanning %s (category=%s, hints=%s)", root_abs, root["category"], hints)
+    log.info("%s %s (category=%s, hints=%s)", "re-processing snapshot of" if from_snapshot
+             else "scanning", root_abs, root["category"], hints)
     result = ScanResult()
     seen: list[str] = []
-    found_items = collect(root_abs, root["rel_path"], hints, progress=progress, cancelled=cancelled)
-    found_paths = {f.rel_path for f in found_items}
-    for found in found_items:
-        result.found += 1
-        seen.append(found.rel_path)
-        result.new += _upsert(conn, root_id, root["volume_uid"], found, now, found_paths)
+    with fs.using(disk):
+        found_items = collect(root_abs, root["rel_path"], hints, progress=progress, cancelled=cancelled)
+        found_paths = {f.rel_path for f in found_items}
+        for found in found_items:
+            result.found += 1
+            seen.append(found.rel_path)
+            result.new += _upsert(conn, root_id, root["volume_uid"], found, now, found_paths)
+            conn.commit()
+
+    if not cancelled() and not from_snapshot:
+        files = fs.save(conn, root_id, disk, now)
+        log.info("snapshot of %s: %d files", root_abs, files)
         conn.commit()
 
     if not cancelled():
         prev = {r["rel_path"]: r["id"] for r in conn.execute(
             "SELECT id, rel_path FROM items WHERE root_id=?", (root_id,))}
         gone = [prev[g] for g in set(prev) - set(seen)]
-        gone = _drop_regrouped(conn, gone, seen)
+        with fs.using(disk):
+            gone = _drop_regrouped(conn, gone, seen)
         result.missing = len(gone)
         conn.executemany("UPDATE items SET missing=1 WHERE id=?", [(i,) for i in gone])
         if missing_completed:
@@ -125,8 +151,16 @@ def _drop_regrouped(conn: sqlite3.Connection, gone: list[int], seen: list[str]) 
 def _files_exist(conn: sqlite3.Connection, item_id: int) -> bool:
     """Its files are still on disk (so it was regrouped, not deleted)."""
     r = conn.execute("SELECT i.volume_uid, i.rel_path FROM items i WHERE i.id=?", (item_id,)).fetchone()
-    mount = mount_for(conn, r["volume_uid"])
-    return bool(mount) and os.path.exists(volumes.join(mount, fs_path(r["rel_path"])))
+    mount = _mount(conn, r["volume_uid"])
+    return bool(mount) and fs.current().exists(volumes.join(mount, fs_path(r["rel_path"])))
+
+
+def _mount(conn: sqlite3.Connection, volume_uid: str) -> str | None:
+    """Where a drive is: the snapshot's own drive counts as there while it's replayed."""
+    disk = fs.current()
+    if isinstance(disk, fs.SnapshotFS) and getattr(disk, "volume_uid", None) == volume_uid:
+        return disk.mount
+    return mount_for(conn, volume_uid)
 
 
 def _claim_wanted(conn: sqlite3.Connection, volume_uid: str, f: FoundItem):
@@ -165,8 +199,8 @@ def _upsert(conn: sqlite3.Connection, root_id: int, volume_uid: str, f: FoundIte
             "AND volume_uid NOT LIKE 'steam:%'",
             (f.category, f.title, f.platform),
         ).fetchall():
-            mount = None if cand["missing"] else mount_for(conn, cand["volume_uid"])
-            gone = mount and not os.path.exists(volumes.join(mount, fs_path(cand["rel_path"])))
+            mount = None if cand["missing"] else _mount(conn, cand["volume_uid"])
+            gone = mount and not fs.current().exists(volumes.join(mount, fs_path(cand["rel_path"])))
             # A season split out of a folder keeps its entry when the layout changes.
             regrouped = (cand["volume_uid"] == volume_uid and cand["rel_path"] not in found_paths
                          and fs_path(cand["rel_path"]) == fs_path(f.rel_path))

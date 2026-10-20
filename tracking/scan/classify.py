@@ -245,7 +245,15 @@ class Hints:
 # --------------------------------------------------------------------------- disc sniffing
 
 def sniff_disc(path: str) -> str | None:
-    """Peek at a disc image header to guess its platform."""
+    """Peek at a disc image header to guess its platform (from the snapshot when
+    re-processing one)."""
+    from . import fs
+
+    return fs.current().sniff(path)
+
+
+def sniff_disc_real(path: str) -> str | None:
+    """Read the header from the disk."""
     try:
         size = os.path.getsize(path)
         with open(path, "rb") as f:

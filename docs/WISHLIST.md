@@ -77,7 +77,7 @@ Match Redump / No-Intro file names against the
 RetroArch uses). Free and keyless, and great for PS1/PS2/PSP/Saturn/Dreamcast/Wii, where
 HowLongToBeat misses.
 
-### Re-detect titles from stored paths
+### ✅ Re-process without the drive *(done, as drive snapshots: scan/fs.py)*
 Re-run the naming rules on the paths already in the database, with no drive needed. It's
 instant after a rule fix; only items whose title changes get refetched (your renamed titles
 are left alone). Disc reading and new files still need a Rescan.

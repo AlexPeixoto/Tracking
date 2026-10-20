@@ -29,6 +29,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `scan/walk.py` | Walks a location: container rules, folder items, loose files |
 | `scan/classify.py` | Category / platform decisions: folder names, ROM extensions, disc headers, release tags, serials |
 | `scan/discid.py` | A disc's own identity, read like an emulator does (also inside .zip): SYSTEM.CNF serial for PS1/PS2 (named via PCSX2's GameIndex), PARAM.SFO for PSP/PS3, Wii/GameCube headers. Used only when the name or platform says too little |
+| `scan/fs.py` | The scanner's disk: the real one (recording a snapshot of every listing and disc header), or a saved snapshot replayed (Rescan of an unplugged drive). The scanner never calls `os` directly for listings, sizes or headers |
 | `scan/install.py` | Installed / installer / ROM-disc, and which file Play starts (scored .exe candidates, preferred disc formats, PS3 EBOOT.BIN) |
 | `scan/videos.py` | Episodes vs movies, one group per series season, extras (NC / AMV / PV folders and files) skipped |
 | `scan/merge.py` | One item per series season, per game (updates/DLC folded in), per movie (copies folded in) |

@@ -70,15 +70,16 @@ class ScanJob(Job):
     """Scan roots, then measure new video files and fetch metadata for new items."""
 
     def __init__(self, root_ids: list[int] | None = None, enrich_after: bool = True,
-                 missing_completed: bool = False):
+                 missing_completed: bool = False, use_snapshots: bool = True):
         super().__init__()
         self.root_ids = root_ids
         self.enrich_after = enrich_after
         self.missing_completed = missing_completed
+        self.use_snapshots = use_snapshots  # unplugged locations: re-process their snapshot
 
     def work(self, conn) -> str:
         ids = self.root_ids or [r["id"] for r in conn.execute("SELECT id FROM roots")]
-        found = new = missing = 0
+        found = new = missing = replayed = 0
         offline = []
         for rid in ids:
             if self.cancelled():
@@ -91,11 +92,14 @@ class ScanJob(Job):
                     missing_completed=self.missing_completed,
                 )
             except scan.VolumeOffline:
-                row = conn.execute(
-                    "SELECT v.label, r.rel_path FROM roots r JOIN volumes v ON v.uid=r.volume_uid "
-                    "WHERE r.id=?", (rid,)).fetchone()
-                offline.append(f"{row['label'] or 'drive'}:/{row['rel_path']}")
-                continue
+                res = self._replay(conn, rid) if self.use_snapshots else None
+                if res is None:
+                    row = conn.execute(
+                        "SELECT v.label, r.rel_path FROM roots r JOIN volumes v ON v.uid=r.volume_uid "
+                        "WHERE r.id=?", (rid,)).fetchone()
+                    offline.append(f"{row['label'] or 'drive'}:/{row['rel_path']}")
+                    continue
+                replayed += 1
             except ProviderError as e:  # an online account: no key, private profile...
                 self.signals.warning.emit(str(e))
                 continue
@@ -108,9 +112,21 @@ class ScanJob(Job):
             self.signals.warning.emit("Offline, skipped: " + ", ".join(offline))
         summary = f"Scan done: {found} items ({new} new, {missing} missing"
         summary += ", marked completed)" if missing and self.missing_completed else ")"
+        if replayed:
+            summary += f", {replayed} location{'s' if replayed > 1 else ''} from snapshots"
         if self.enrich_after and not self.cancelled():
             summary += " - " + EnrichJob(only_pending=True).run_inline(conn, self)
         return summary
+
+
+    def _replay(self, conn, rid: int):
+        """An unplugged location: re-process what its last real scan recorded."""
+        try:
+            return scan.scan_root(
+                conn, rid, from_snapshot=True, cancelled=self.cancelled,
+                progress=lambda rel: self.signals.progress.emit(f"Re-processing {rel} (snapshot)"))
+        except scan.NoSnapshot:
+            return None
 
 
 class EnrichJob(Job):

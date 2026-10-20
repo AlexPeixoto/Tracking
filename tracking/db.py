@@ -148,6 +148,21 @@ CREATE TABLE IF NOT EXISTS completions (
     notes        TEXT,
     added_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- What a location looked like at its last real scan, so it can be re-processed without
+-- the drive (scan/fs.py): one row per folder, entries as JSON [[name, is_dir, size, mtime]].
+CREATE TABLE IF NOT EXISTS snapshots (
+    root_id  INTEGER PRIMARY KEY REFERENCES roots(id) ON DELETE CASCADE,
+    taken_at TEXT NOT NULL,
+    files    INTEGER NOT NULL,
+    probes   TEXT                  -- disc header results: {rel path: {"sniff": .., "disc": ..}}
+);
+CREATE TABLE IF NOT EXISTS snapshot_dirs (
+    root_id INTEGER NOT NULL REFERENCES roots(id) ON DELETE CASCADE,
+    rel     TEXT NOT NULL,
+    entries TEXT NOT NULL,
+    PRIMARY KEY (root_id, rel)
+) WITHOUT ROWID;
+
 -- What happened to an item's files: copied / moved between drives (transfer.py).
 CREATE TABLE IF NOT EXISTS item_history (
     item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
