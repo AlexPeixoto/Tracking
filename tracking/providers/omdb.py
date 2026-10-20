@@ -128,7 +128,8 @@ def _lookup_suggest(title: str, year: int | None, kind: str = "movie") -> Metada
         year=best.get("y"),
         external_id=best.get("id"),
         external_url=f"https://www.imdb.com/title/{best['id']}/",
-        poster_url=(best.get("i") or {}).get("imageUrl"),
+        # The original can be 8000 px tall and 10 MB: ask for a 600 px wide version.
+        poster_url=_sized((best.get("i") or {}).get("imageUrl"), 600),
     )
 
 
@@ -151,7 +152,11 @@ def _suggest(title: str) -> list[dict]:
 
 def _thumb(url: str | None) -> str | None:
     """IMDb image URLs take a size suffix: ask for a small one for search results."""
-    return url.replace("._V1_.", "._V1_UX140_.") if url and "._V1_." in url else url
+    return _sized(url, 140)
+
+
+def _sized(url: str | None, width: int) -> str | None:
+    return url.replace("._V1_.", f"._V1_UX{width}_.") if url and "._V1_." in url else url
 
 
 def search(q: Query) -> list[Candidate]:

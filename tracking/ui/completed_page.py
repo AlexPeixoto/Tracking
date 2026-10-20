@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import categories, completions, db, platforms
+from .grid import load_scaled
 from .year_image import ExportYearDialog
 
 COVER = QSize(120, 168)
@@ -58,7 +59,7 @@ def _placeholder(title: str) -> QPixmap:
 
 def _cover(c: completions.Completion) -> QPixmap:
     path = c.poster_path()
-    pix = QPixmap(path) if path else QPixmap()
+    pix = (load_scaled(path, COVER.width(), COVER.height()) if path else None) or QPixmap()
     if pix.isNull():
         return _placeholder(c.title)
     scaled = pix.scaled(COVER, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)

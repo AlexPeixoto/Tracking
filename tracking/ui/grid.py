@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPointF, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QImageReader,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from .. import db, paths
@@ -41,6 +51,19 @@ def fmt_rating(item: db.Item) -> str:
     return f"{item.rating:.1f}"
 
 
+def load_scaled(path: str, w: int, h: int) -> QPixmap | None:
+    """An image decoded straight at (about) the size we draw it: a huge cover (IMDb's
+    originals can be 8000 px tall) would exceed Qt's image memory limit otherwise."""
+    reader = QImageReader(path)
+    reader.setAutoTransform(True)
+    size = reader.size()
+    if size.isValid() and (size.width() > 2 * w or size.height() > 2 * h):
+        size.scale(2 * w, 2 * h, Qt.KeepAspectRatioByExpanding)  # 2x: sharp on hi-dpi screens
+        reader.setScaledSize(size)
+    img = reader.read()
+    return None if img.isNull() else QPixmap.fromImage(img)
+
+
 class PosterCache:
     def __init__(self):
         self._cache: dict[tuple[str, int], QPixmap] = {}
@@ -51,8 +74,8 @@ class PosterCache:
         key = (name, w)
         pm = self._cache.get(key)
         if pm is None:
-            src = QPixmap(str(paths.posters_dir() / name))
-            if src.isNull():
+            src = load_scaled(str(paths.posters_dir() / name), w, h)
+            if src is None:
                 return None
             # Fill the card (crop overflow) like a poster wall would.
             pm = src.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
@@ -241,6 +264,8 @@ class CardDelegate(QStyledItemDelegate):
             if item.install_state == "installer":
                 where = f"{where} · installer".strip(" ·")
             if item.playtime_min:
+                # "60h · 65h played": the HLTB figure loses its "main" to make room
+                meta = [m.replace("h main", "h") for m in meta]
                 meta.append(f"{fmt_played(item.playtime_min)} played")
             if where and item.source != "steam":
                 meta.insert(0, where)
@@ -256,8 +281,12 @@ class CardDelegate(QStyledItemDelegate):
             meta.insert(0, f"★ {item.avg_score / 10:.1f}")  # average of all scores, out of 10
         p.setFont(option.font)
         p.setPen(pal.text_muted)
-        p.drawText(QRect(text_rect.x(), y + 1, CARD_W, fm.height()), Qt.AlignLeft,
-                   "  ·  ".join(m for m in meta if m))
+        metrics = QFontMetrics(option.font)
+        text = "  ·  ".join(m for m in meta if m)
+        if metrics.horizontalAdvance(text) > CARD_W:  # tighter before cutting anything off
+            text = " · ".join(m for m in meta if m)
+        line = metrics.elidedText(text, Qt.ElideRight, CARD_W)
+        p.drawText(QRect(text_rect.x(), y + 1, CARD_W, fm.height()), Qt.AlignLeft, line)
         p.restore()
 
     @staticmethod

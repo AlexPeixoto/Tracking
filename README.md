@@ -60,28 +60,42 @@ remembers what you've finished, even when the drive is unplugged.
 <table>
   <tr>
     <td width="50%"><img src="docs/images/item-game.png" alt="A game's page"><br>
-      <sub><b>Item page</b>: every score, HowLongToBeat times, completion, notes, edits.</sub></td>
+      <sub><b>Play</b> games from their page (PC, emulators, Steam), with every score,
+      HowLongToBeat times, time played, completion and notes.</sub></td>
     <td width="50%"><img src="docs/images/item-anime.png" alt="An anime's page"><br>
-      <sub><b>Episodes</b>: the full list with per-episode scores and which ones you have.</sub></td>
+      <sub><b>Play episode 8</b>: the next one opens in your player; the list shows per-episode
+      scores, what's on disk and the last one you played.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/games.png" alt="Games, recently played"><br>
+      <sub><b>Games</b> by platform, sorted by <i>Recently played</i>; filter by Installed /
+      Installer / ROM. Console box art comes from libretro, no key needed.</sub></td>
+    <td><img src="docs/images/watching.png" alt="Continue watching"><br>
+      <sub><b>Continue watching</b>: series you're partway through, with "Ep 7 / 26".</sub></td>
   </tr>
   <tr>
     <td><img src="docs/images/completed.png" alt="Completed in 2024"><br>
-      <sub><b>Completed</b>: one page per year with its stats; drag covers into your own order.</sub></td>
+      <sub><b>Completed</b>: one page per year with its stats and a month chart; drag covers
+      into your own order.</sub></td>
     <td><img src="docs/images/export-dialog.png" alt="Export year as image"><br>
-      <sub><b>Export year as image</b>: columns, cover size and shape, gaps, background.</sub></td>
+      <sub><b>Export year as image</b>: columns, cover size and shape, gaps, background,
+      a corner stamp, presets, and leaving out entries without a cover.</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/images/games.png" alt="Games by platform"><br>
-      <sub><b>Games</b> split by platform, with HowLongToBeat hours on each card.</sub></td>
+    <td><img src="docs/images/backlog.png" alt="Backlog"><br>
+      <sub><b>Backlog</b>: what you have and haven't finished, here sorted
+      <i>Shortest first</i>.</sub></td>
     <td><img src="docs/images/want.png" alt="Want to acquire"><br>
       <sub><b>Want to acquire</b>: things you don't have yet, with covers and scores.</sub></td>
   </tr>
 </table>
 
 <details>
-<summary><b>The exported image</b> (Completed › 2024 › Export year › As image)</summary>
+<summary><b>More</b>: the exported image, and Library health</summary>
 <br>
 <img src="docs/images/completed-2024.jpg" alt="Games completed in 2024" width="560">
+<br><br>
+<img src="docs/images/health.png" alt="Library health" width="560">
 </details>
 
 ## Getting started
@@ -172,6 +186,7 @@ its exact size in pixels:
 | Background | Transparent, black, white or any colour |
 | Title · labels | "Completed in 2024" on top; title and/or date under each cover |
 | Corner stamp | A small "2024 · 14 completed" badge in any corner |
+| Without a cover | Shown as a tile with the name, or left out |
 | Presets | Save your settings by name ("Twitter grid", "Big poster") and switch between them |
 | Format | PNG or JPG |
 

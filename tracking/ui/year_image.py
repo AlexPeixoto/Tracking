@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import completions, db
+from .grid import load_scaled
 
 SETTING = "year_image"
 PRESETS = "year_image_presets"
@@ -57,6 +58,7 @@ class Options:
     crop: bool = True                # fill the cell (crop) or fit the whole cover
     stamp: str = "none"              # a small "2024 · 14 completed" badge in a corner
     stamp_text: str = "{year} · {count} completed"
+    skip_no_cover: bool = False      # leave out entries without a cover (instead of a name tile)
 
     @property
     def cover_height(self) -> int:
@@ -120,7 +122,13 @@ def layout(n: int, opts: Options) -> tuple[int, int, int, int, int, int]:
     return w, h, cols, rows, label_h, heading_h
 
 
+def shown(entries: list[completions.Completion], opts: Options) -> list[completions.Completion]:
+    """The entries that go in the picture."""
+    return [c for c in entries if c.poster_path()] if opts.skip_no_cover else list(entries)
+
+
 def render(entries: list[completions.Completion], year: int, opts: Options) -> QImage:
+    entries = shown(entries, opts)
     w, h, cols, _rows, label_h, heading_h = layout(len(entries), opts)
     img = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
     transparent = opts.background == "transparent"
@@ -149,7 +157,7 @@ def render(entries: list[completions.Completion], year: int, opts: Options) -> Q
         y = opts.margin + heading_h + r * (ch + label_h + opts.gap)
         cell = QRect(x, y, cw, ch)
         path = c.poster_path()
-        pix = QPixmap(path) if path else QPixmap()
+        pix = (load_scaled(path, cw, ch) if path else None) or QPixmap()
         if not pix.isNull():
             mode = Qt.KeepAspectRatioByExpanding if opts.crop else Qt.KeepAspectRatio
             scaled = pix.scaled(cw, ch, mode, Qt.SmoothTransformation)
@@ -228,6 +236,8 @@ class ExportYearDialog(QDialog):
         self.shape = QComboBox()
         self.shape.addItems(SHAPES)
         self.crop = QCheckBox("Fill the shape (crop covers that don't fit)")
+        self.skip = QCheckBox("Leave out entries without a cover")
+        self.skip.setToolTip("Otherwise they show as a tile with their name")
         self.gap = QSpinBox()
         self.gap.setRange(0, 200)
         self.gap.setSuffix(" px")
@@ -262,6 +272,7 @@ class ExportYearDialog(QDialog):
         form.addRow("Cover width", self.cover_width)
         form.addRow("Cover shape", self.shape)
         form.addRow("", self.crop)
+        form.addRow("", self.skip)
         form.addRow("Gap between covers", self.gap)
         form.addRow("Margin", self.margin)
         form.addRow("Background", bg_row)
@@ -290,8 +301,9 @@ class ExportYearDialog(QDialog):
         left.addWidget(self.size)
         missing = sum(1 for c in entries if not c.poster_path())
         if missing:
-            note = QLabel(f"{missing} entries have no cover yet; they show as a name tile. "
-                          "“Fetch missing covers” in the Completed page looks them up.")
+            note = QLabel(f"{missing} entries have no cover yet: they show as a name tile, or tick "
+                          "“Leave out entries without a cover”. “Fetch missing covers” on the "
+                          "Completed page looks them up.")
             note.setWordWrap(True)
             note.setObjectName("Muted")
             left.addWidget(note)
@@ -308,7 +320,7 @@ class ExportYearDialog(QDialog):
             w.valueChanged.connect(self._changed)
         for w in (self.shape, self.background, self.labels, self.stamp):
             w.currentIndexChanged.connect(self._changed)
-        for w in (self.crop, self.heading):
+        for w in (self.crop, self.heading, self.skip):
             w.toggled.connect(self._changed)
         self.heading_text.textChanged.connect(self._changed)
         self.stamp_text.textChanged.connect(self._changed)
@@ -320,6 +332,7 @@ class ExportYearDialog(QDialog):
         self.cover_width.setValue(o.cover_width)
         self.shape.setCurrentText(o.shape if o.shape in SHAPES else next(iter(SHAPES)))
         self.crop.setChecked(o.crop)
+        self.skip.setChecked(o.skip_no_cover)
         self.gap.setValue(o.gap)
         self.margin.setValue(o.margin)
         if self.background.findData(o.background) < 0:
@@ -330,13 +343,16 @@ class ExportYearDialog(QDialog):
         self.labels.setCurrentIndex(max(0, self.labels.findData(o.labels)))
         self.stamp.setCurrentIndex(max(0, self.stamp.findData(o.stamp)))
         self.stamp_text.setText(o.stamp_text)
+        self.stamp_text.setCursorPosition(0)
+        self.heading_text.setCursorPosition(0)
 
     def _read(self) -> Options:
         return Options(self.columns.value(), self.cover_width.value(), self.shape.currentText(),
                        self.gap.value(), self.margin.value(), self.background.currentData(),
                        self.heading.isChecked(), self.heading_text.text() or "Completed in {year}",
                        self.labels.currentData(), self.crop.isChecked(), self.stamp.currentData(),
-                       self.stamp_text.text() or "{year} · {count} completed")
+                       self.stamp_text.text() or "{year} · {count} completed",
+                       self.skip.isChecked())
 
     # ------------------------------------------------------------------ presets
 
@@ -392,8 +408,9 @@ class ExportYearDialog(QDialog):
         self.opts = self._read()
         self.heading_text.setEnabled(self.opts.heading)
         self.stamp_text.setEnabled(self.opts.stamp != "none")
-        w, h, cols, rows, *_ = layout(len(self.entries), self.opts)
-        self.size.setText(f"{len(self.entries)} covers · {cols} × {rows} grid · "
+        n = len(shown(self.entries, self.opts))
+        w, h, cols, rows, *_ = layout(n, self.opts)
+        self.size.setText(f"{n} covers · {cols} × {rows} grid · "
                           f"<b>{w} × {h} px</b>")
         img = render(self.entries, self.year, self.opts)
         self.preview.setPixmap(QPixmap.fromImage(img).scaled(

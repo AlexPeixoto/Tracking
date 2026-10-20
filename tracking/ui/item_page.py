@@ -328,9 +328,12 @@ class ItemPage(QScrollArea):
                     ("Completionist", item.hltb_complete)]
             cells = [(label, f"{h:.1f} h" if h else "—") for label, h in rows]
             if item.playtime_min is not None:
-                cells.append(("Played (Steam)", f"{item.playtime_min / 60:.1f} h"
+                # Steam's play time plus sessions started from here (db.ITEM_SELECT adds them)
+                label = "Played" + (" (Steam)" if item.source == db.STEAM else "")
+                cells.append((label, f"{item.playtime_min / 60:.1f} h"
                               if item.playtime_min >= 60 else f"{item.playtime_min:.0f} min"))
-                cells.append(("Last played", item.last_played or "never"))
+                last = max(item.last_played or "", item.last_launched or "")
+                cells.append(("Last played", last[:10] or "never"))
         else:
             cells = [("Total runtime", fmt_hours(item.total_hours, item.category) or "—")]
             if item.video_count and item.kind != "movie":

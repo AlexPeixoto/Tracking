@@ -124,3 +124,34 @@ def test_space_toggles_completed_and_focus_view(conn, qt):
     w._toggle_selected()
     with db.session() as c:
         assert not db.get_item(c, a).completed
+
+
+def test_export_can_leave_out_entries_without_cover(conn, qt, tmp_path, monkeypatch):
+    from tracking import paths
+    from tracking.ui import year_image
+
+    a = completions.add(conn, "Has cover", "2024-01-01")
+    completions.add(conn, "No cover", "2024-02-01")
+    (paths.posters_dir() / "done-x.jpg").write_bytes(b"x")
+    conn.execute("UPDATE completions SET poster='done-x.jpg' WHERE id=?", (a,))
+    entries = completions.list_year(conn, 2024)
+    opts = year_image.Options(cover_width=100, shape="Square", columns=1)
+    assert [c.title for c in year_image.shown(entries, opts)] == ["Has cover", "No cover"]
+    opts.skip_no_cover = True
+    assert [c.title for c in year_image.shown(entries, opts)] == ["Has cover"]
+    assert year_image.render(entries, 2024, opts).height() == 100   # one row, not two
+
+
+def test_big_covers_are_decoded_at_display_size(tmp_path, qt):
+    from PySide6.QtGui import QColor, QImage
+
+    from tracking.ui.grid import load_scaled
+
+    big = QImage(2400, 3600, QImage.Format_RGB32)
+    big.fill(QColor("#336699"))
+    path = str(tmp_path / "big.jpg")
+    assert big.save(path)
+    pm = load_scaled(path, 170, 240)
+    # Decoded just big enough to fill a 2x card (340 x 480), not at 2400 x 3600.
+    assert pm is not None and pm.width() == 340 and 480 <= pm.height() < 600
+    assert load_scaled(str(tmp_path / "missing.jpg"), 170, 240) is None
