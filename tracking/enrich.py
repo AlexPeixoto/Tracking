@@ -235,7 +235,8 @@ def enrich_item(conn: sqlite3.Connection, item_id: int, mount: str | None,
     # Refetch looks for a new cover, but keeps the old one if none turns up (a service
     # being down shouldn't leave the item blank).
     old_poster = item.poster
-    poster = None if force else old_poster
+    pinned = conn.execute("SELECT cover_pinned FROM items WHERE id=?", (item.id,)).fetchone()[0]
+    poster = None if force and not pinned else old_poster
     if mount and not poster:
         art = _local_art(item_abs_path(mount, item))
         if art:

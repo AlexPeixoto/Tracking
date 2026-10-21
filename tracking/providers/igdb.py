@@ -11,6 +11,7 @@ import time
 
 from .. import platforms, titles
 from .base import (
+    Candidate,
     Metadata,
     Provider,
     ProviderError,
@@ -103,6 +104,38 @@ def _search(title: str, platform: str | None, client_id: str, secret: str) -> Me
         summary=best.get("summary") or None,
         scores=scores,
     )
+
+
+def configured(settings: dict[str, str]) -> bool:
+    return bool(settings.get("igdb_client_id") and settings.get("igdb_client_secret"))
+
+
+def search_covers(title: str, settings: dict[str, str], limit: int = 30) -> list[Candidate]:
+    """Search cover…: every IGDB game for ``title`` that has a cover (editions and ports
+    each have their own), best match first. ``image_url`` is the full-size cover."""
+    client_id, secret = settings.get("igdb_client_id", ""), settings.get("igdb_client_secret", "")
+    if not (client_id and secret):
+        raise ProviderError("IGDB needs a free Client ID and Secret (Settings › Games)")
+    token = _access_token(client_id, secret)
+    safe = title.replace('"', " ")
+    body = (f'search "{safe}"; fields name,first_release_date,url,cover.image_id,platforms.abbreviation,'
+            f"platforms.name; where cover != null; limit {limit};")
+    _limit.wait()
+    r = session().post(API_URL, data=body.encode(), timeout=20, headers={
+        "Client-ID": client_id, "Authorization": f"Bearer {token}"})
+    if r.status_code in (401, 403):
+        raise ProviderError("IGDB rejected the token")
+    r.raise_for_status()
+    out = []
+    for g in r.json():
+        cover = (g.get("cover") or {}).get("image_id")
+        if not cover:
+            continue
+        released = g.get("first_release_date")
+        plats = ", ".join(p.get("abbreviation") or p.get("name") or "" for p in g.get("platforms") or [])
+        out.append(Candidate(g.get("name") or "?", time.gmtime(released).tm_year if released else None,
+                             plats, COVER_URL.format(cover), g.get("url")))
+    return out
 
 
 def lookup(q: Query) -> Metadata | None:

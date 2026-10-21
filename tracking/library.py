@@ -49,10 +49,25 @@ def use_match(conn: sqlite3.Connection, item: db.Item, title: str, year: int | N
     conn.execute(
         "UPDATE items SET user_title=?, year=COALESCE(?, year), steam_appid=COALESCE(?, steam_appid), "
         "enriched_at=NULL, poster=NULL, rating=NULL, rating_max=NULL, rating_source=NULL, "
-        "summary=NULL, external_url=NULL, external_id=NULL WHERE id=?",
+        "summary=NULL, external_url=NULL, external_id=NULL, cover_pinned=0 WHERE id=?",
         (title if title != item.detected_title else None, year, steam_appid, item.id))
     conn.execute("DELETE FROM scores WHERE item_id=?", (item.id,))
     conn.execute("DELETE FROM episodes WHERE item_id=?", (item.id,))
+
+
+def set_cover_url(conn: sqlite3.Connection, item_id: int, url: str) -> str:
+    """Search cover…: download the cover you picked and keep it (refetch won't replace it).
+    Returns the new file name."""
+    from .enrich import _save_poster  # enrich imports the scanner: keep it lazy
+
+    old = conn.execute("SELECT poster FROM items WHERE id=?", (item_id,)).fetchone()
+    name = _save_poster(item_id, url=url)
+    conn.execute("UPDATE items SET poster=?, cover_pinned=1 WHERE id=?", (name, item_id))
+    if old and old[0] and old[0] != name:
+        in_use = conn.execute("SELECT 1 FROM completions WHERE poster=?", (old[0],)).fetchone()
+        if not in_use:
+            (paths.posters_dir() / old[0]).unlink(missing_ok=True)
+    return name
 
 
 def move_items(conn: sqlite3.Connection, item_ids: list[int], category: str,

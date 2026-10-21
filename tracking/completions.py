@@ -381,16 +381,21 @@ def fetch_cover(conn: sqlite3.Connection, cid: int) -> bool:
     if not md or not md.poster_url:
         log.info("no cover found for completed %r", c.title)
         return False
+    set_cover_url(conn, cid, md.poster_url)
+    return True
+
+
+def set_cover_url(conn: sqlite3.Connection, cid: int, url: str) -> None:
+    """Download ``url`` as the entry's own cover (a lookup, or one you picked)."""
     from .providers.base import session
 
-    resp = session().get(md.poster_url, timeout=30)
+    resp = session().get(url, timeout=30)
     resp.raise_for_status()
     ctype = resp.headers.get("Content-Type", "")
     name = _cover_name(cid, '.png' if 'png' in ctype else '.webp' if 'webp' in ctype else '.jpg')
     _delete_own_covers(conn, [cid])
     (paths.posters_dir() / name).write_bytes(resp.content)
     conn.execute("UPDATE completions SET poster=? WHERE id=?", (name, cid))
-    return True
 
 
 def _cover_name(cid: int, ext: str) -> str:

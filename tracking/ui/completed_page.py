@@ -12,6 +12,7 @@ from PySide6.QtCore import QDate, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -343,6 +344,8 @@ class CompletedPage(QWidget):
             if entry and entry.item_id:
                 menu.addAction("Open in library", lambda: self.open_item.emit(entry.item_id))
             menu.addAction("Choose cover image…", lambda: self.choose_cover(ids[0]))
+            if entry and entry.category == "game":
+                menu.addAction("Search cover on IGDB…", lambda: self.search_cover(ids[0]))
         menu.addAction("Look up cover again", lambda: self.fetch_covers.emit(ids))
         menu.addSeparator()
         menu.addAction("Remove", self.remove_selected)
@@ -418,6 +421,26 @@ class CompletedPage(QWidget):
             with db.session() as conn:
                 completions.set_cover_file(conn, cid, path)
             self.refresh()
+
+    def search_cover(self, cid: int) -> None:
+        from .dialogs import CoverDialog
+
+        entry = next((c for c in self.entries if c.id == cid), None)
+        if not entry:
+            return
+        dlg = CoverDialog(entry.title, self)
+        if not dlg.exec() or not dlg.url:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            with db.session() as conn:
+                completions.set_cover_url(conn, cid, dlg.url)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Cover", f"Couldn't download the cover: {e}")
+            return
+        QApplication.restoreOverrideCursor()
+        self.refresh()
 
     def _moved(self, *_) -> None:
         ids = [self.list.item(i).data(IdRole) for i in range(self.list.count())]

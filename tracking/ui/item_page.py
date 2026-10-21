@@ -109,6 +109,7 @@ class ItemPage(QScrollArea):
     deleted = Signal(int)
     play = Signal(int)
     find_match = Signal(int)         # search services by hand
+    search_cover = Signal(int)       # pick a cover on IGDB
     play_episode = Signal(int, object, object)  # item id, season, episode
 
     def __init__(self, parent=None):
@@ -154,10 +155,14 @@ class ItemPage(QScrollArea):
         match = QPushButton("Find match…")
         match.setToolTip("Wrong cover / scores, or nothing found? Search with any name and pick")
         match.clicked.connect(lambda: self.find_match.emit(self.item.id))
+        self.cover_btn = QPushButton("Search cover on IGDB…")
+        self.cover_btn.setToolTip("Pick the cover yourself from IGDB (every edition and port); "
+                                  "refetching keeps it")
+        self.cover_btn.clicked.connect(lambda: self.search_cover.emit(self.item.id))
         delete = QPushButton("Remove from library")
         self.delete_btn = delete
         delete.clicked.connect(self._delete)
-        for b in (self.open_btn, refetch, match, delete):
+        for b in (self.open_btn, refetch, match, self.cover_btn, delete):
             left.addWidget(b)
         self.location = QLabel()
         self.location.setObjectName("Muted")
@@ -309,6 +314,7 @@ class ItemPage(QScrollArea):
             pm = pm.copy((pm.width() - POSTER_W) // 2, (pm.height() - POSTER_H) // 2, POSTER_W, POSTER_H)
         self.poster.setPixmap(pm or posters.placeholder(item, POSTER_W, POSTER_H))
         self.nomatch_btn.setVisible(not item.poster and item.source != db.STEAM)
+        self.cover_btn.setVisible(item.category == "game")
 
         self.title.setText(item.title)
         cat = categories.get(item.category)

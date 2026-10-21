@@ -37,9 +37,9 @@ class _Signals(QObject):
 class _Search(QRunnable):
     """A search off the UI thread; ``search(query)`` returns (service label, candidates)."""
 
-    def __init__(self, number: int, query: providers.Query, search=providers.search):
+    def __init__(self, number: int, query: providers.Query, search=providers.search, size: QSize = THUMB):
         super().__init__()
-        self.number, self.query, self.search = number, query, search
+        self.number, self.query, self.search, self.size = number, query, search, size
         self.signals = _Signals()
 
     def run(self) -> None:
@@ -59,7 +59,7 @@ class _Search(QRunnable):
             img = QImage.fromData(data)
             if not img.isNull():
                 self.signals.thumb.emit(self.number, row,
-                                        img.scaled(THUMB, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                                        img.scaled(self.size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
 
 class WantDialog(QDialog):

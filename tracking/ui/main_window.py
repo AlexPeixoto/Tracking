@@ -363,6 +363,7 @@ class MainWindow(QMainWindow):
         self.page.open_folder.connect(self.open_item)
         self.page.play.connect(self.play)
         self.page.find_match.connect(self.find_match)
+        self.page.search_cover.connect(self.search_cover)
         self.page.play_episode.connect(self.play_episode)
         self.page.deleted.connect(self._item_deleted)
         self.stack.addWidget(self.page)
@@ -404,6 +405,27 @@ class MainWindow(QMainWindow):
             self.start_job(EnrichJob([item_id], force=True))
             if self.stack.currentIndex() == 1:
                 self.show_item(item_id)
+
+    def search_cover(self, item_id: int):
+        """Pick a game's cover on IGDB; it's kept when metadata is fetched again."""
+        item = self._find(item_id)
+        if not item:
+            return
+        dlg = dialogs.CoverDialog(item.title, self)
+        if not dlg.exec() or not dlg.url:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            with db.session() as conn:
+                library.set_cover_url(conn, item_id, dlg.url)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Cover", f"Couldn't download the cover: {e}")
+            return
+        QApplication.restoreOverrideCursor()
+        self._item_changed(item_id)
+        if self.stack.currentIndex() == 1 and self.page.item and self.page.item.id == item_id:
+            self.show_item(item_id)
 
     def transfer(self, ids: list[int], move: bool):
         """Copy / move items to a folder you pick; the library follows (history kept)."""
@@ -1074,6 +1096,8 @@ class MainWindow(QMainWindow):
                                lambda: self.play(ids[0]))
             menu.addAction("Open details", lambda: self.show_item(ids[0]))
             menu.addAction("Find match…", lambda: self.find_match(ids[0]))
+            if items[0].category == "game":
+                menu.addAction("Search cover on IGDB…", lambda: self.search_cover(ids[0]))
             menu.addAction("Open folder" if items[0].source == "disk" else "Open web page",
                            lambda: self.open_item(ids[0]))
             menu.addSeparator()
