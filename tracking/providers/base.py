@@ -191,12 +191,21 @@ def cached_json(provider: str, key: str, max_age_days: float, fetch) -> object:
 
 
 def best_match(title: str, year: int | None, candidates, names, cand_year=lambda c: None,
-               bonus=lambda c: 0.0, threshold: float = 75.0):
+               bonus=lambda c: 0.0, threshold: float = 75.0, prefer=None):
     """Pick the candidate whose names look most like ``title``.
 
     ``names(c)`` lists a candidate's titles (main, English, synonyms...),
     ``cand_year(c)`` its release year, ``bonus(c)`` any extra points (platform...).
+    ``prefer(c)``: candidates to try first (on your platform), the rest only when none
+    of those is close enough. A PS5 "Wolverine" is "Marvel's Wolverine", not the NES
+    "Wolverine" that matches the name exactly.
     """
+    if prefer is not None:
+        candidates = list(candidates or [])
+        first = best_match(title, year, [c for c in candidates if prefer(c)], names, cand_year,
+                           bonus, threshold)
+        if first is not None:
+            return first
     best, best_score = None, 0.0
     for c in candidates or []:
         ns = [n for n in names(c) if n]

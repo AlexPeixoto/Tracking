@@ -149,3 +149,49 @@ def test_cover_dialog(conn, qt, monkeypatch):
     dlg.results.setCurrentRow(1)
     dlg._use()
     assert dlg.url == "https://img/co2.jpg"
+
+
+def test_on_platform_result_wins_over_exact_name():
+    from tracking.providers.base import best_match
+
+    found = [{"name": "Wolverine", "year": 1991, "plats": ["NES"]},
+             {"name": "Marvel's Wolverine", "year": 2026, "plats": ["PlayStation 5"]}]
+
+    def pick(plat, year=None):
+        on = lambda r: plat in r["plats"]
+        r = best_match("Wolverine", year, found, names=lambda r: [r["name"]],
+                       cand_year=lambda r: r["year"], bonus=lambda r: 8 if on(r) else 0, prefer=on)
+        return r and r["name"]
+
+    assert pick("PlayStation 5") == "Marvel's Wolverine"
+    assert pick("NES") == "Wolverine"
+    assert pick("PC") == "Wolverine"                     # nothing on PC: the best name overall
+    assert pick("PC", 2026) == "Wolverine"               # a year alone doesn't beat the name
+
+
+def test_title_and_year():
+    assert completions.title_and_year("Wolverine 2026") == ("Wolverine", 2026)
+    assert completions.title_and_year("Wolverine (2026)") == ("Wolverine", 2026)
+    assert completions.title_and_year("1979") == ("1979", None)
+    assert completions.title_and_year("Okami") == ("Okami", None)
+
+
+def test_completed_cover_tries_the_name_without_its_year(conn, monkeypatch):
+    seen = []
+
+    def lookup(q):
+        seen.append((q.title, q.year, q.platform))
+        return Metadata(poster_url="http://cover") if q.title == "Wolverine" else None
+
+    monkeypatch.setattr(providers, "REGISTRY", [Provider("p", "P", frozenset({"game"}), lookup)])
+    _web(monkeypatch, _Session(image=b"ps5"))
+    cid = conn.execute("INSERT INTO completions(title, category, platform, completed_on) "
+                       "VALUES('Wolverine 2026', 'game', 'PS5', '2026-10-01')").lastrowid
+    assert completions.fetch_cover(conn, cid)
+    assert seen[0] == ("Wolverine 2026", None, "PS5") and ("Wolverine", 2026, "PS5") in seen
+
+    seen.clear()                                         # a year after it is finished: part of the name
+    cid = conn.execute("INSERT INTO completions(title, category, completed_on) "
+                       "VALUES('Cyberpunk 2077', 'game', '2024-01-01')").lastrowid
+    completions.fetch_cover(conn, cid)
+    assert all(y is None for _, y, _ in seen)

@@ -61,8 +61,10 @@ def lookup(q: Query) -> Metadata | None:
     results = _results(q)
     want = platforms.service_name(q.platform, "hltb")
     # The platform bonus picks the PS3 "Demon's Souls" over the PS5 remake.
-    best = best_match(q.title, None, results, names=lambda r: [r.get("name")],
-                      bonus=lambda r: 8 if platform_matches(want, r.get("platforms") or []) else 0)
+    best = best_match(q.title, q.year, results, names=lambda r: [r.get("name")],
+                      cand_year=lambda r: r.get("year") or None,
+                      bonus=lambda r: 8 if platform_matches(want, r.get("platforms") or []) else 0,
+                      prefer=lambda r: platform_matches(want, r.get("platforms") or []))
     if not best:
         return None
     url = best.get("url")

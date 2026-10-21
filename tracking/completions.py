@@ -18,7 +18,7 @@ import logging
 import os
 import re
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from pathlib import Path
 
@@ -356,6 +356,19 @@ def needs_cover(conn: sqlite3.Connection) -> list[int]:
         "WHERE c.poster IS NULL AND (i.poster IS NULL OR c.item_id IS NULL)")]
 
 
+_TITLE_YEAR = re.compile(r"^(.+?)[\s,]*[(\[]?((?:19|20)\d\d)[)\]]?$")
+
+
+def title_and_year(title: str) -> tuple[str, int | None]:
+    """ "Wolverine 2026" / "Wolverine (2026)" → ("Wolverine", 2026): a year typed after the
+    name is the release year, which picks the right game among same-named ones. A name
+    that is only a year ("1979") stays as it is."""
+    m = _TITLE_YEAR.match(title.strip())
+    if not m or not re.search(r"[A-Za-z]", m.group(1)):
+        return title, None
+    return m.group(1).strip(" -:"), int(m.group(2))
+
+
 def fetch_cover(conn: sqlite3.Connection, cid: int) -> bool:
     """Look the entry up by title (the same services as the library) and save a cover."""
     from .enrich import combine, search_titles  # enrich imports the scanner: keep it lazy
@@ -365,13 +378,19 @@ def fetch_cover(conn: sqlite3.Connection, cid: int) -> bool:
         return False
     settings = db.all_settings(conn)
     q = providers.Query(c.title, category=c.category, platform=c.platform, settings=settings)
+    # The name as typed first ("Cyberpunk 2077"), then without a year after it
+    # ("Wolverine 2026" is Marvel's Wolverine, released 2026).
+    tries = [(t, None) for t in search_titles(_Named(c.title, c.category))]
+    title, year = title_and_year(c.title)
+    if year and year <= int(c.completed_on[:4]) + 1:
+        tries += [(t, year) for t in search_titles(_Named(title, c.category))]
     results = {}
     for p in providers.for_query(q):
         if not p.configured(q):
             continue
         try:
-            for t in search_titles(_Named(c.title, c.category)):
-                r = p.lookup(q.with_title(t))
+            for t, y in tries:
+                r = p.lookup(replace(q, title=t, year=y))
                 if r:
                     results[p.name] = r
                     break

@@ -37,10 +37,14 @@ def lookup(q: Query) -> Metadata | None:
     data = cached_json("rawg", q.title.lower(), 30,
                        lambda: get(API_URL, {"search": q.title, "page_size": 10}))
     want = platforms.service_name(q.platform, "rawg")
+    def on_platform(g) -> bool:
+        return platform_matches(want, [(p.get("platform") or {}).get("name")
+                                       for p in g.get("platforms") or []])
+
     best = best_match(
-        q.title, None, data.get("results") or [], names=lambda g: [g.get("name")],
-        bonus=lambda g: 8 if platform_matches(
-            want, [(p.get("platform") or {}).get("name") for p in g.get("platforms") or []]) else 0)
+        q.title, q.year, data.get("results") or [], names=lambda g: [g.get("name")],
+        cand_year=lambda g: year_of(g.get("released")),
+        bonus=lambda g: 8 if on_platform(g) else 0, prefer=on_platform)
     if not best:
         return None
 

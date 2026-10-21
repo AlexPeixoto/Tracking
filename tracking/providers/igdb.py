@@ -57,7 +57,8 @@ def _access_token(client_id: str, secret: str) -> str:
         return _token[1]
 
 
-def _search(title: str, platform: str | None, client_id: str, secret: str) -> Metadata | None:
+def _search(title: str, platform: str | None, client_id: str, secret: str,
+            year: int | None = None) -> Metadata | None:
     if not (client_id and secret):
         return None
 
@@ -82,10 +83,14 @@ def _search(title: str, platform: str | None, client_id: str, secret: str) -> Me
         names = {titles.normalize(p.get("name", "")) for p in g.get("platforms") or []}
         return 8 if want and want in names else 0
 
-    best = best_match(title, None, games,
+    def release_year(g) -> int | None:
+        t = g.get("first_release_date")
+        return time.gmtime(t).tm_year if t else None
+
+    best = best_match(title, year, games,
                       names=lambda g: [g.get("name"),
                                        *(a.get("name") for a in g.get("alternative_names") or [])],
-                      bonus=on_platform)
+                      cand_year=release_year, bonus=on_platform, prefer=lambda g: on_platform(g) > 0)
     if not best:
         return None
     url = best.get("url")
@@ -139,7 +144,8 @@ def search_covers(title: str, settings: dict[str, str], limit: int = 30) -> list
 
 
 def lookup(q: Query) -> Metadata | None:
-    return _search(q.title, q.platform, q.setting("igdb_client_id"), q.setting("igdb_client_secret"))
+    return _search(q.title, q.platform, q.setting("igdb_client_id"), q.setting("igdb_client_secret"),
+                   q.year)
 
 
 PROVIDER = Provider(
