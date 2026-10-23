@@ -28,7 +28,7 @@ EXTRA_DIRS = {
 # "NCOP", "NCED2", "AMV1", "OPV3", "PV", "ED 01", "ED Episode 08", "Menu": not episodes.
 _EXTRA_FILE = re.compile(
     r"(?i)(?:^|[\s_\-\]])(?:nc\s?(?:op|ed)\w*|ncoped|amv\d*|(?:op|ed)v\d*|pv\d*|menu\d*|teaser\d*|"
-    r"creditless\b.*)$|^(?:op|ed)(?:\s*(?:episode|ep\.?)?\s*\d+)?$")
+    r"creditless\b.*|credits|splash\s*screen)$|^(?:op|ed)(?:\s*(?:episode|ep\.?)?\s*\d+)?$")
 
 
 def is_extra_file(name: str) -> bool:

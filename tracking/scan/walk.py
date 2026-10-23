@@ -136,10 +136,15 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
         # says nothing about the show's name: use what the video files say.
         weak = titles.season_from_dir(name) is not None or titles.is_weak_title(folder.title)
         # "1a. MSG 0079" in a collection pack: abbreviated; its files say "Mobile Suit GUNDAM 0079".
+        # Not when sibling folders' files share that name: "05 - Nekomonogatari (White)" and
+        # "06 - Kabukimonogatari" both hold "Monogatari Series Second Season - 01.mkv".
         in_pack = titles.strip_order_prefix(name) != name
         use_files = g and not titles.is_weak_title(g.title) and (
-            weak or (in_pack and len(g.title) > len(folder.title)))
+            weak or (in_pack and len(g.title) > len(folder.title)
+                     and (_abbreviated(folder.title) or not _shared_by_siblings(dir_abs, g.title))))
         base = g.title if use_files else folder.title
+        if g and not use_files and not weak and _part_of_parent(g.title, folder.title, dir_rel):
+            base = f"{g.title} {folder.title}"
         if g and titles.normalize(g.title) and titles.normalize(g.title) == titles.normalize(folder.title):
             base = folder.title  # "86 (Eighty Six)/[Judas] 86 - S01E01.mkv": "86" really is the name
         elif titles.is_weak_title(base):  # "4b. OVA (2005)" holding "01.mkv": the collection's name
@@ -153,14 +158,27 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
                   len(item.videos), dir_rel, d.reason)
         return [item]
 
-    # Several seasons / movies in one folder: one item each.
+    # Several seasons / movies in one folder: one item each. Each needs its own path:
+    # "Sekirei" S1 and "Sekirei Pure Engagement" S1 side by side are both "s1", and the
+    # second would overwrite the first when saved. The biggest group keeps the plain one.
+    slugs: dict[int, str] = {}
+    for g in sorted(groups, key=lambda g: -len(g.files)):
+        slug = g.slug
+        if slug in slugs.values():
+            slug = f"{slug}-{titles.normalize(g.title)[:40]}"
+        n = 2
+        while slug in slugs.values():
+            slug, n = f"{g.slug}-{n}", n + 1
+        slugs[id(g)] = slug
     items = []
     for g in groups:
         size = sum(e.size for e, _ in g.files)
         base = g.title
         if titles.is_weak_title(base):
             base = folder.title if not titles.is_weak_title(folder.title) else _folder_title(base, dir_rel)
-        item = FoundItem(f"{dir_rel}{GROUP_SEP}{g.slug}", True, d.category, None,
+        elif _part_of_parent(g.title, folder.title, dir_rel):
+            base = f"{g.title} {folder.title}"
+        item = FoundItem(f"{dir_rel}{GROUP_SEP}{slugs[id(g)]}", True, d.category, None,
                          display_title(base, g.kind, g.season), g.year or folder.year,
                          [e for e, _ in g.files], len(g.files), size,
                          kind=g.kind, season=g.season, reason=d.reason + "; split by season/movie",
@@ -169,6 +187,46 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
                   season_tag(g.season), len(item.videos), item.rel_path)
         items.append(item)
     return items
+
+
+def _part_of_parent(files_title: str, folder_title: str, dir_rel: str) -> bool:
+    """ "Hare + Guu/DELUXE" holding "Hare + Guu DELUXE Ep1.1.mkv": the folder is a part of the
+    show its parent names, so the item is "Hare + Guu DELUXE", not "DELUXE" or "Hare + Guu"."""
+    parts = dir_rel.split("/")
+    if len(parts) < 2 or titles.is_weak_title(folder_title):
+        return False
+    parent = titles.parse_video(titles.strip_order_prefix(parts[-2]), keep_plus=True).title
+    show = titles.normalize(files_title)
+    return bool(show) and show == titles.normalize(parent) and show not in titles.normalize(folder_title)
+
+
+def _abbreviated(title: str) -> bool:
+    """ "FF Extras", "KoF - Destiny", "SamSho", "MSG 0079": a short word with 2+ capitals."""
+    return any(len(w) <= 6 and sum(ch.isupper() for ch in w) >= 2
+               for w in title.replace(".", "").split())
+
+
+def _first_video_title(dir_abs: str) -> str | None:
+    try:
+        for e in sorted(fs.current().scandir(dir_abs), key=lambda e: e.name.lower()):
+            is_video = os.path.splitext(e.name)[1].lower() in VIDEO_EXT
+            if e.is_file(follow_symlinks=False) and is_video and not is_extra_file(e.name):
+                return titles.normalize(titles.parse_video(e.name).title)
+    except OSError:
+        pass
+    return None
+
+
+def _shared_by_siblings(dir_abs: str, files_title: str) -> bool:
+    """Do other folders next to this one hold files with the same show name?"""
+    parent, me = os.path.dirname(dir_abs), os.path.basename(dir_abs)
+    want = titles.normalize(files_title)
+    try:
+        siblings = [e for e in fs.current().scandir(parent)
+                    if e.is_dir(follow_symlinks=False) and e.name != me]
+    except OSError:
+        return False
+    return any(_first_video_title(e.path) == want for e in siblings)
 
 
 _NAMELESS = {"copy", "newfolder", "game", "games", "disc", "disc1", "iso", "rom", "backup", "image"}

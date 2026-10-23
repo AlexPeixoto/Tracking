@@ -402,3 +402,58 @@ def test_numbers_that_belong_to_the_title():
     assert titles.parse_video("Mob Psycho 100").title == "Mob Psycho 100"
     v = titles.parse_video("[Grp] Show 05.mkv")
     assert (v.title, v.episode) == ("Show", 5)
+
+
+def test_two_shows_in_one_folder_each_keep_their_item(tmp_path):
+    # "Sekirei" S1 and "Sekirei Pure Engagement" S1 side by side: both used to be saved
+    # at "...::s1", so the second overwrote the first.
+    folder = "anime/Sekirei (S01+S02+OVAs) [BD]"
+    for n in range(1, 4):
+        touch(tmp_path, f"{folder}/[Anime Time] Sekirei - 0{n}.mkv")
+    for n in range(1, 5):
+        touch(tmp_path, f"{folder}/Sekirei Pure Engagement - 0{n}.mkv")
+    items = [i for i in scan.collect(str(tmp_path), "", Hints()) if i.kind == "series"]
+    assert sorted((i.title, len(i.videos)) for i in items) == [("Sekirei", 3), ("Sekirei Pure Engagement", 4)]
+    assert len({i.rel_path for i in items}) == 2
+    assert any(i.rel_path.endswith("::s1") for i in items)        # the bigger one keeps its path
+
+
+def test_hare_plus_guu(tmp_path):
+    base = "anime/Hare + Guu"
+    for n in range(1, 4):
+        touch(tmp_path, f"{base}/TV-1/Hare + Guu TV Ep0{n} [raw][720x540.10bit.x264][e6f4a60d][spx].mkv")
+        touch(tmp_path, f"{base}/DELUXE/Hare + Guu DELUXE Ep{n}.1 [raw][720x540.10bit.x264][4a7a10ac][spx].mkv")
+        touch(tmp_path, f"{base}/FINAL/Hare + Guu FINAL Ep0{n} [raw][720x540.10bit.x264][23349465][spx].mkv")
+    touch(tmp_path, f"{base}/FINAL/Hare + Guu FINAL credits [raw][720x540.10bit.x264][90ce077f][spx].mkv")
+    touch(tmp_path, f"{base}/Hare + Guu splashscreen [raw][720x540.10bit.x264][496cc9f9][spx].mkv")
+    items = scan.collect(str(tmp_path), "", Hints())
+    assert sorted((i.title, len(i.videos)) for i in items) == [
+        ("Hare + Guu", 3), ("Hare + Guu DELUXE", 3), ("Hare + Guu FINAL", 3)]
+
+
+def test_plus_joining_releases_isnt_a_name():
+    assert titles.parse_video("Hare + Guu TV Ep01 [raw].mkv").title == "Hare + Guu"
+    assert titles.parse_video("Hare + Guu", keep_plus=True).title == "Hare + Guu"
+    assert titles.parse_video("Death Parade + Special [BD]").title != "Death Parade + Special"
+    assert titles.parse_video("Senki Zesshou Symphogear + G + GX [BD]", keep_plus=True).title == \
+        "Senki Zesshou Symphogear"
+    assert titles.is_weak_title("TV-1") and titles.is_weak_title("OVA 2")
+
+
+def test_collection_folders_keep_their_own_names(tmp_path):
+    # Every Monogatari "Second Season" folder holds files called that: the folder names it.
+    pack = "anime/Monogatari Series (BD 1080p)"
+    for folder in ("05 - Nekomonogatari (White)", "06 - Kabukimonogatari"):
+        for n in range(1, 3):
+            touch(tmp_path, f"{pack}/{folder}/Monogatari Series Second Season - 0{n}.mkv")
+    touch(tmp_path, f"{pack}/01 - Bakemonogatari/Bakemonogatari - 01.mkv")
+    # An abbreviated folder name still takes the files' full name.
+    snk = "anime/SNK Anime (1993-2018)"
+    for n in range(1, 3):
+        touch(tmp_path, f"{snk}/4c. KoF - Destiny (2017-18)/The King of Fighters Destiny - 0{n}.mkv")
+        touch(tmp_path, f"{snk}/4d. KoF - Another Day (2005)/The King of Fighters Destiny - 0{n}.mkv")
+        touch(tmp_path, f"{snk}/1a. AoF - Movie (1993)/Art of Fighting - 0{n}.mkv")
+    found = {i.title for i in scan.collect(str(tmp_path), "", Hints())}
+    assert {"Nekomonogatari", "Kabukimonogatari"} <= found
+    assert "Monogatari Series Second Season" not in found
+    assert "The King of Fighters Destiny" in found

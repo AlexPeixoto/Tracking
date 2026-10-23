@@ -182,7 +182,7 @@ def _as_int(v) -> int | None:
 
 
 @lru_cache(maxsize=8192)
-def parse_video(name: str) -> VideoInfo:
+def parse_video(name: str, keep_plus: bool = False) -> VideoInfo:
     """Title / year / season / episode from a release name (file or folder).
 
     "[naiyas] Vampire Hunter D - Bloodlust (2000) (BD1080p...).mkv" ->
@@ -218,6 +218,10 @@ def parse_video(name: str) -> VideoInfo:
                 if part and part.group(0).lower() not in title.lower():
                     title = f"{title} Part {part.group(1).capitalize()}"
             alt = g.get("alternative_title")
+            if is_series or keep_plus or name.lower().endswith(VIDEO_SUFFIXES):
+                plus = _plus_title(name, title)
+                if plus != title:
+                    title, alt = plus, None  # "Hare + Guu": "Guu" isn't a subtitle
             # "Vampire Hunter D - Bloodlust": guessit splits the subtitle off movies.
             if not is_series and isinstance(alt, str) and re.search(r"[A-Za-z]{3}", alt) and len(alt) < 50:
                 title = f"{title}: {alt}"
@@ -253,6 +257,21 @@ def parse_video(name: str) -> VideoInfo:
     if m:
         s = s.split(m.group(1))[0]
     return VideoInfo(_tidy(s) or name, year, None, None, "movie")
+
+
+VIDEO_SUFFIXES = (".mkv", ".mp4", ".avi", ".m4v", ".webm", ".wmv", ".mov", ".ogm", ".ts")
+_PLUS_NOT_NAME = re.compile(
+    r"(?i)^(?:s\d+|season|ova|oav|ona|movies?|films?|specials?|sp|extras?|g|gx|axz|xv)$")
+
+
+def _plus_title(name: str, title: str) -> str:
+    """ "Hare + Guu TV Ep01.mkv": guessit stops at the "+" ("Hare"); the name goes on.
+    Not for "Death Parade + Special" or "Symphogear + G + GX": those join releases."""
+    stem = _BRACKETS.sub(" ", strip_ext(name))
+    m = re.search(re.escape(title) + r"\s*\+\s*([A-Za-z][\w'!.-]*)", stem)
+    if not m or _PLUS_NOT_NAME.match(m.group(1)):
+        return title
+    return f"{title} + {m.group(1)}"
 
 
 def _number_in_title(name: str, title: str) -> tuple[str, str] | None:
@@ -301,7 +320,7 @@ def is_weak_title(title: str | None) -> bool:
     release type ("OVA", "Series", "Extras")."""
     key = normalize(title or "")
     return (not key or key.isdigit() or bool(re.fullmatch(r"\d{1,3}[a-z]", key))
-            or key in _TYPE_WORDS)
+            or key in _TYPE_WORDS or bool(re.fullmatch(r"(?:tv|ova|ona|oav)\d{1,2}", key)))
 
 
 _TYPE_WORDS = {"ova", "ovas", "oav", "ona", "tv", "movie", "movies", "film", "series", "special",
