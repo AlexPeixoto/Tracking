@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from .. import categories, completions, db, launcher, library, platforms, scan, titles, volumes
@@ -248,6 +249,7 @@ class MainWindow(QMainWindow):
         self.search.setPlaceholderText("Search…")
         self.search.setClearButtonEnabled(True)
         self.search.setMaximumWidth(240)
+        self.search.setMinimumWidth(150)
         self.search.textChanged.connect(self.apply_filter)
         self.sort = QComboBox()
         for key, label in SORTS:
@@ -267,6 +269,19 @@ class MainWindow(QMainWindow):
             self.install.addItem(label, key)
         self.install.setCurrentIndex(max(0, self.install.findData(install_filter or "")))
         self.install.currentIndexChanged.connect(self._save_install_filter)
+        # Locations: show only what's on some drives / folders (all by default).
+        self.loc_btn = QToolButton()
+        self.loc_btn.setObjectName("LocationFilter")
+        self.loc_btn.setPopupMode(QToolButton.InstantPopup)
+        self.loc_btn.setToolTip("Show only items from some locations (drives, folders, Steam)")
+        self.loc_menu = QMenu(self.loc_btn)
+        self.loc_btn.setMenu(self.loc_menu)
+        with db.session() as conn:
+            saved = db.get_setting(conn, self.LOCATION_FILTER, "") or ""
+        # None: every location; otherwise the ids of the ticked ones (may be none).
+        self.loc_only: set[int] | None = (None if not saved else
+                                          {int(x) for x in saved.split(",") if x.isdigit()})
+        self.loc_boxes: dict[int, QCheckBox] = {}
         self.hide_offline = QCheckBox("Hide offline")
         self.hide_offline.setToolTip("Hide items on drives that aren't connected "
                                      "(drives are checked every 25 s)")
@@ -304,6 +319,7 @@ class MainWindow(QMainWindow):
         head.addWidget(self.hide_offline)
         head.addWidget(self.include_steam)
         head.addWidget(self.install)
+        head.addWidget(self.loc_btn)
         head.addSpacing(8)
         head.addWidget(self.search)
         head.addWidget(self.sort)
@@ -620,6 +636,7 @@ class MainWindow(QMainWindow):
             steam_games = db.source_count(conn, db.STEAM)
             done_years = completions.years(conn)
         self._rebuild_sidebar(counts, plats, wanted, steam_games, done_years)
+        self._rebuild_locations()
         self.apply_filter()
         if self.nav[0] == COMPLETED:
             self.done_page.show_year(self.nav[1])
@@ -771,6 +788,74 @@ class MainWindow(QMainWindow):
         self.nav = (COMPLETED, self.done_page.year)
         self.reload()
 
+    LOCATION_FILTER = "location_filter"
+
+    def _rebuild_locations(self) -> None:
+        """The Locations dropdown: All, then one checkbox per location with its item count."""
+        with db.session() as conn:
+            rows = conn.execute(
+                "SELECT r.id, r.volume_uid, r.rel_path, v.label, "
+                "(SELECT count(*) FROM items i WHERE i.root_id=r.id) n "
+                "FROM roots r JOIN volumes v ON v.uid=r.volume_uid ORDER BY v.label, r.rel_path").fetchall()
+        if self.loc_only is not None:
+            self.loc_only &= {r["id"] for r in rows}  # removed locations drop out
+        self.loc_menu.clear()
+        self.loc_boxes = {}
+        self.loc_all = QCheckBox("All locations")
+        self.loc_all.setChecked(self.loc_only is None)
+        self.loc_all.toggled.connect(self._all_locations)
+        self._menu_widget(self.loc_all)
+        self.loc_menu.addSeparator()
+        for r in rows:
+            if steam.is_account(r["volume_uid"]):
+                name = r["label"] or "Steam"
+            else:
+                label = r["label"] or "(no label)"
+                name = f"{label}  /{r['rel_path']}" if r["rel_path"] else f"{label}  (whole drive)"
+            box = QCheckBox(f"{name}   {r['n']}")
+            box.setChecked(self.loc_only is None or r["id"] in self.loc_only)
+            box.toggled.connect(self._location_toggled)
+            self.loc_boxes[r["id"]] = box
+            self._menu_widget(box)
+        self._location_text()
+
+    def _menu_widget(self, w: QWidget) -> None:
+        # A checkbox inside the menu: clicking it keeps the menu open.
+        w.setContentsMargins(10, 3, 14, 3)
+        act = QWidgetAction(self.loc_menu)
+        act.setDefaultWidget(w)
+        self.loc_menu.addAction(act)
+
+    def _all_locations(self, on: bool) -> None:
+        for box in self.loc_boxes.values():
+            box.blockSignals(True)
+            box.setChecked(on)
+            box.blockSignals(False)
+        self._location_toggled()
+
+    def _location_toggled(self, *_) -> None:
+        picked = {rid for rid, box in self.loc_boxes.items() if box.isChecked()}
+        self.loc_only = None if len(picked) == len(self.loc_boxes) else picked
+        self.loc_all.blockSignals(True)
+        self.loc_all.setChecked(self.loc_only is None)
+        self.loc_all.blockSignals(False)
+        with db.session() as conn:  # "" = all, "-" = none ticked
+            db.set_setting(conn, self.LOCATION_FILTER, "" if self.loc_only is None
+                           else ",".join(map(str, sorted(self.loc_only))) or "-")
+        self._location_text()
+        self.apply_filter()
+
+    def _location_text(self) -> None:
+        if self.loc_only is None:
+            self.loc_btn.setText("Locations: All")
+        elif not self.loc_only:
+            self.loc_btn.setText("Locations: None")
+        elif len(self.loc_only) == 1:
+            box = self.loc_boxes[next(iter(self.loc_only))]
+            self.loc_btn.setText(box.text().rsplit("   ", 1)[0].replace("  ", " "))
+        else:
+            self.loc_btn.setText(f"Locations: {len(self.loc_only)} of {len(self.loc_boxes)}")
+
     def _save_filter(self, key: str, on: bool):
         with db.session() as conn:
             db.set_setting(conn, key, "1" if on else "0")
@@ -805,6 +890,8 @@ class MainWindow(QMainWindow):
         self.include_steam.setVisible(library_view and category in (None, "game")
                                       and any(view_of(i) == STEAM for i in self.all_items))
         with_steam = library_view and self.include_steam.isChecked()
+        self.loc_btn.setVisible(not wanted_view and len(self.loc_boxes) > 1)
+        locs = None if wanted_view else self.loc_only
         dupes = self._steam_duplicates() if with_steam else set()
         items = [
             i for i in self.all_items
@@ -818,6 +905,7 @@ class MainWindow(QMainWindow):
             and not (hide_no_cover and not i.poster)
             and not (hide_offline and self._offline(i))
             and (not inst or i.install_state == inst)
+            and (locs is None or i.root_id in locs)
         ]
         key = self.sort.currentData()
         if key in ("avg", "best"):

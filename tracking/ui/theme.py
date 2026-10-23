@@ -93,6 +93,13 @@ QHeaderView::section { background: #232733; border: none; padding: 6px; }
 QMenu { background: #1b1e25; border: 1px solid #2a2e38; }
 QMenu::item { padding: 6px 24px; }
 QMenu::item:selected { background: #24324f; }
+/* Checkboxes inside a menu (the Locations filter): a visible box on the dark menu. */
+QMenu QCheckBox { padding: 2px 4px; spacing: 8px; }
+QMenu QCheckBox:hover { background: #24324f; }
+QMenu QCheckBox::indicator { border: 1px solid #5a6070; border-radius: 3px; background: #14161b; }
+QMenu QCheckBox::indicator:checked { background: #5b8cff; border-color: #5b8cff; }
+QToolButton#LocationFilter { padding-right: 20px; }
+QToolButton#LocationFilter::menu-indicator { subcontrol-position: right center; right: 6px; }
 QSplitter::handle { background: #2a2e38; }
 """
 

@@ -209,3 +209,40 @@ def test_export_sections_and_removing_coverless_entries(conn, qt, monkeypatch):
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     page.remove_no_cover()
     assert [c.title for c in completions.list_year(conn, 2024)] == ["Okami"]
+
+
+def test_location_filter(conn, qt):
+    from tracking.ui import main_window
+
+    conn.execute("INSERT INTO volumes(uid, label) VALUES('v', 'Media'), ('w', 'SSD')")
+    a = conn.execute("INSERT INTO roots(volume_uid, rel_path) VALUES('v', '')").lastrowid
+    b = conn.execute("INSERT INTO roots(volume_uid, rel_path) VALUES('w', 'Games')").lastrowid
+    okami, hades = _item(conn, "Okami", root_id=a), _item(conn, "Hades", path="Games/Hades", root_id=b)
+    library.add_wanted(conn, "game", "Wanted", 2025)
+    conn.commit()
+    w = main_window.MainWindow()
+    w.nav = ("game", None)
+    w.reload()
+    shown = lambda: {i.id for i in w.model.items if i.source != "wish"}
+    assert shown() == {okami, hades} and w.loc_btn.text() == "Locations: All"
+    assert [x.text() for x in w.loc_boxes.values()] == ["Media  (whole drive)   1", "SSD  /Games   1"]
+
+    w.loc_boxes[a].setChecked(False)                     # only the SSD
+    assert shown() == {hades} and w.loc_btn.text() == "SSD /Games"
+    assert not w.loc_all.isChecked()
+    w.loc_all.setChecked(True)                           # select all
+    assert shown() == {okami, hades} and all(x.isChecked() for x in w.loc_boxes.values())
+    w.loc_all.setChecked(False)                          # ...and none: nothing shown
+    assert not w.model.items and w.loc_btn.text() == "Locations: None"
+    w.loc_boxes[a].setChecked(True)
+    w.loc_boxes[b].setChecked(True)                      # every box ticked = All again
+    assert w.loc_all.isChecked() and w.loc_btn.text() == "Locations: All"
+
+    w.loc_boxes[b].setChecked(False)                     # remembered across restarts
+    w2 = main_window.MainWindow()
+    w2.nav = ("game", None)
+    w2.reload()
+    assert {i.id for i in w2.model.items} == {okami} and w2.loc_btn.text() == "Media (whole drive)"
+    w2.nav = (main_window.WANT, None)                    # the wish list isn't on a drive
+    w2.reload()
+    assert [i.title for i in w2.model.items] == ["Wanted"]
