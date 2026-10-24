@@ -20,9 +20,10 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
-from ... import categories, db, library, providers
+from ... import categories, db, library, platforms, providers
 from ...providers.base import session
 
 THUMB = QSize(68, 96)
@@ -63,10 +64,15 @@ class _Search(QRunnable):
 
 
 class WantDialog(QDialog):
-    def __init__(self, category: str = "game", parent=None):
+    """Search for something and add it to "Want to acquire" or, with ``to_library``,
+    straight to the library: something you have that no scan will find (Game Pass, a
+    console, a disc, a streaming service)."""
+
+    def __init__(self, category: str = "game", parent=None, to_library: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("Want to acquire")
-        self.resize(640, 620)
+        self.to_library = to_library
+        self.setWindowTitle("Add to library" if to_library else "Want to acquire")
+        self.resize(640, 660 if to_library else 620)
         self.category = category
         self.added: list[int] = []
         self._search_no = 0
@@ -80,6 +86,7 @@ class WantDialog(QDialog):
                 self.kind.addItem(c.label, c.key)
         self.kind.setCurrentIndex(max(0, self.kind.findData(category)))
         self.kind.currentIndexChanged.connect(self._search)
+        self.kind.currentIndexChanged.connect(self._toggle_platform)
         self.text = QLineEdit()
         self.text.setPlaceholderText("Name of the game, anime, movie or show…")
         self.text.returnPressed.connect(self._search)
@@ -102,6 +109,26 @@ class WantDialog(QDialog):
         self.results.itemSelectionChanged.connect(self._update_buttons)
         lay.addWidget(self.results, 1)
 
+        # Adding to the library: which platform, and where you play it.
+        self.platform = QComboBox()
+        self.platform.addItem("Platform: not set", None)
+        for p in platforms.NAMES:
+            self.platform.addItem(p, p)
+        self.store = QComboBox()
+        self.store.setEditable(True)
+        self.store.addItem("")
+        self.store.addItems(library.STORES)
+        self.store.lineEdit().setPlaceholderText("Played on… (Xbox app, a console, a disc…)")
+        owned = QHBoxLayout()
+        owned.addWidget(self.platform)
+        owned.addWidget(self.store, 1)
+        self.owned_row = QWidget()
+        self.owned_row.setLayout(owned)
+        owned.setContentsMargins(0, 0, 0, 0)
+        self.owned_row.setVisible(to_library)
+        lay.addWidget(self.owned_row)
+        self._toggle_platform()
+
         buttons = QHBoxLayout()
         self.add_btn = QPushButton("Add selected")
         self.add_btn.setObjectName("Primary")
@@ -115,9 +142,13 @@ class WantDialog(QDialog):
         buttons.addWidget(self.add_btn)
         buttons.addWidget(close)
         lay.addLayout(buttons)
-        hint = QLabel("Ctrl/Shift-click to pick several. Added items get covers and scores like the "
-                      "rest of your library, and move out of this list on their own when a scan "
-                      "finds them on disk.")
+        hint = QLabel(
+            "For things you have but no scan finds: Game Pass, a console, a disc, a streaming "
+            "service. They get covers and scores like the rest, and link to files if a scan "
+            "ever finds them on disk." if to_library else
+            "Ctrl/Shift-click to pick several. Added items get covers and scores like the "
+            "rest of your library, and move out of this list on their own when a scan "
+            "finds them on disk.")
         hint.setObjectName("Muted")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -169,6 +200,16 @@ class WantDialog(QDialog):
 
     # ------------------------------------------------------------------ add
 
+    def _toggle_platform(self) -> None:
+        self.platform.setEnabled(categories.get(self.kind.currentData()).platforms)
+
+    def _add(self, conn, category: str, title: str, year=None, steam_appid=None, url=None) -> int:
+        if not self.to_library:
+            return library.add_wanted(conn, category, title, year, steam_appid, url)
+        platform = self.platform.currentData() or ("PC" if steam_appid else None)
+        return library.add_owned(conn, category, title, year, steam_appid, url, platform,
+                                 self.store.currentText())
+
     def _update_buttons(self) -> None:
         text = self.text.text().strip()
         self.add_btn.setEnabled(bool(self.results.selectedItems()))
@@ -180,13 +221,12 @@ class WantDialog(QDialog):
         with db.session() as conn:
             for r in rows:
                 c = self._candidates[r]
-                self.added.append(library.add_wanted(conn, self.category, c.title, c.year,
-                                                     c.steam_appid, c.url))
+                self.added.append(self._add(conn, self.category, c.title, c.year, c.steam_appid, c.url))
         if self.added:
             self.accept()
 
     def _add_as_typed(self) -> None:
         with db.session() as conn:
-            self.added.append(library.add_wanted(conn, self.kind.currentData(), self.text.text()))
+            self.added.append(self._add(conn, self.kind.currentData(), self.text.text()))
         self.category = self.kind.currentData()
         self.accept()

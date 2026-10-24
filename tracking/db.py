@@ -202,6 +202,7 @@ MIGRATIONS = [
     ("items", "plan_changed", "TEXT"),      # when it last moved on the board
     ("items", "cover_pinned", "INTEGER NOT NULL DEFAULT 0"),  # a cover you picked: refetch keeps it
     ("volumes", "name", "TEXT"),            # your name for a drive / device (label: the system's)
+    ("items", "store", "TEXT"),             # added by hand: where you play it (Xbox app, a disc...)
 ]
 
 
@@ -328,6 +329,7 @@ class Item:
     external_id: str | None = None       # the matched service's id (IMDb tt…, TVmaze, Steam…)
     plan_position: int | None = None
     root_id: int | None = None           # the location it was found in (Locations filter)
+    store: str | None = None             # added by hand: where you play it ("Xbox app / Game Pass")
 
     @property
     def avg_score(self) -> float | None:
@@ -361,7 +363,7 @@ SELECT id, volume_uid, rel_path, is_dir,
        last_played,
        install_state, COALESCE(user_launch, launch_path) AS launch_path, launch_args,
        last_launched, launch_count, last_episode, last_episode_season, last_watched,
-       plan_state, plan_position, root_id,
+       plan_state, plan_position, root_id, store,
        rating, rating_max, rating_source, external_id, external_url, poster, summary, missing,
        (SELECT COUNT(*) FROM media_files m WHERE m.item_id = items.id) AS video_count
 FROM items
@@ -406,6 +408,7 @@ def row_to_item(row: sqlite3.Row) -> Item:
         plan_state=row["plan_state"],
         plan_position=row["plan_position"],
         root_id=row["root_id"],
+        store=row["store"],
         rating=row["rating"],
         rating_max=row["rating_max"],
         rating_source=row["rating_source"],

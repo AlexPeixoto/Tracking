@@ -190,9 +190,7 @@ class MainWindow(QMainWindow):
         action("Locations…", self.manage_locations, "Ctrl+L")
         action("Rescan…", lambda: self.rescan(), "F5")
         action("Update metadata", lambda: self.start_job(EnrichJob(only_pending=True)))
-        action("Want to acquire…",
-               lambda: self.done_page.add() if self.nav[0] == COMPLETED else self.add_wanted(),
-               "Ctrl+N")
+        action("Add…", self.add_here, "Ctrl+N")
         tb.addSeparator()
         export = QToolButton()
         export.setText("Export list…")
@@ -304,9 +302,8 @@ class MainWindow(QMainWindow):
         head.addWidget(self.heading)
         self.add_btn = QPushButton("+ Add…")
         self.add_btn.setObjectName("Primary")
-        self.add_btn.setToolTip("Search for something you want and add it to this list (Ctrl+N)")
-        self.add_btn.clicked.connect(
-            lambda: self.add_steam_account() if self.nav[0] == STEAM else self.add_wanted())
+        self.add_btn.setToolTip("Search for something and add it (Ctrl+N)")
+        self.add_btn.clicked.connect(self.add_here)
         self.add_btn.hide()
         head.addSpacing(10)
         head.addWidget(self.add_btn)
@@ -937,11 +934,13 @@ class MainWindow(QMainWindow):
         if steam_view:
             heading = "Steam"
         self.heading.setText(heading)
-        self.add_btn.setVisible(wanted_view or steam_view)
+        self.add_btn.setVisible(wanted_view or steam_view or library_view)
         self.add_btn.setText("+ Add Steam account…" if steam_view else "+ Add…")
-        self.add_btn.setToolTip("Import the games a Steam account owns, with play time"
-                                if steam_view else "Search for something you want and add it "
-                                "to this list (Ctrl+N)")
+        self.add_btn.setToolTip(
+            "Import the games a Steam account owns, with play time" if steam_view else
+            "Search for something you want and add it to this list (Ctrl+N)" if wanted_view else
+            "Add something you have that no scan finds: Game Pass, a console, a disc, "
+            "a streaming service (Ctrl+N)")
         if steam_view:
             played_h = sum(i.playtime_min or 0 for i in items) / 60
             done = sum(1 for i in items if i.completed)
@@ -1207,6 +1206,32 @@ class MainWindow(QMainWindow):
         menu.exec(self.grid.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------ want to acquire
+
+    def add_here(self):
+        """Ctrl+N / "+ Add…": what adding means where you are."""
+        if self.nav[0] == COMPLETED:
+            self.done_page.add()
+        elif self.nav[0] == STEAM:
+            self.add_steam_account()
+        elif self.nav[0] == WANT:
+            self.add_wanted()
+        else:
+            self.add_owned()
+
+    def add_owned(self, category: str | None = None):
+        """Something you have that no scan finds (Game Pass, a console, a disc...)."""
+        category = category or self.nav[0]
+        if category not in dict(SECTIONS):
+            category = "game"
+        dlg = dialogs.WantDialog(category, self, to_library=True)
+        if self.nav[0] == "game" and self.nav[1]:
+            dlg.platform.setCurrentIndex(max(0, dlg.platform.findData(self.nav[1])))
+        if dlg.exec() != QDialog.Accepted or not dlg.added:
+            return
+        self.reload()
+        self.start_job(EnrichJob(dlg.added, force=True))  # covers, scores, play time
+        if len(dlg.added) == 1:
+            self.show_item(dlg.added[0])
 
     def add_wanted(self, category: str | None = None):
         category = category or (self.nav[1] if self.nav[0] == WANT else self.nav[0]) or "game"

@@ -77,6 +77,8 @@ PLATFORMS: list[Platform] = [
     _P("Xbox", ("xbox",), (), "Xbox"),
     _P("Xbox 360", ("xbox360", "x360"), ("xbox360", "x360"), "Xbox 360"),
     _P("Xbox One", ("xboxone",), ("xboxone",), "Xbox One"),
+    _P("Xbox Series", ("xboxseries", "xboxseriesx", "xboxseriess", "xsx"), ("xboxseries",),
+       "Xbox Series S/X", "Xbox Series X|S", "Xbox Series X/S"),
     _P("PC Engine", ("pcengine", "turbografx", "turbografx16", "pce", "tg16"), ("pcengine", "turbografx16"),
        None, "TurboGrafx-16/PC Engine", "TurboGrafx-16"),
     _P("PC-FX", ("pcfx",)),

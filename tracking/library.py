@@ -24,7 +24,8 @@ def set_completed(conn: sqlite3.Connection, item_ids: list[int], done: bool) -> 
 
 
 def edit_item(conn: sqlite3.Connection, item: db.Item, *, title: str, category: str,
-              platform: str | None, year: int | None, notes: str | None) -> bool:
+              platform: str | None, year: int | None, notes: str | None,
+              store: str | None = None) -> bool:
     """Save edits from the item page. Returns True when what we search for changed
     (title, category, platform or year), meaning metadata should be fetched again.
 
@@ -38,6 +39,8 @@ def edit_item(conn: sqlite3.Connection, item: db.Item, *, title: str, category: 
         (title if title and title != item.detected_title else None, category, platform, year,
          (notes or "").strip() or None, item.id),
     )
+    if store is not None:
+        conn.execute("UPDATE items SET store=? WHERE id=?", (store.strip() or None, item.id))
     return (title or item.detected_title, category, platform, year) != (
         item.title, item.category, item.platform, item.year)
 
@@ -125,6 +128,35 @@ def add_wanted(conn: sqlite3.Connection, category: str, title: str, year: int | 
         "VALUES(?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
         (WANTED_VOLUME, f"{category}/{uuid.uuid4().hex}", category, platform, title, year,
          db.WANTED, steam_appid, url, "series" if category == "tv" else None),
+    ).lastrowid
+
+
+# Where something you add by hand is played: suggestions, any text works.
+STORES = ["Xbox app / Game Pass", "Xbox console", "PlayStation console", "Nintendo console",
+          "Epic Games", "EA app", "Ubisoft Connect", "Battle.net", "GOG Galaxy", "Amazon Games",
+          "Itch.io", "Physical disc / cartridge", "Streaming", "Cloud gaming"]
+
+
+def add_owned(conn: sqlite3.Connection, category: str, title: str, year: int | None = None,
+              steam_appid: int | None = None, url: str | None = None, platform: str | None = None,
+              store: str | None = None) -> int:
+    """Add something you have that no scan will find (Game Pass, a console, a disc,
+    a streaming service) straight to the library. Returns the item id."""
+    title = title.strip()
+    platform = platform if categories.get(category).platforms else None
+    existing = conn.execute(
+        "SELECT id FROM items WHERE source IN ('manual', ?) AND category=? AND title=? COLLATE NOCASE "
+        "AND COALESCE(platform, '')=COALESCE(?, '')", (db.WANTED, category, title, platform)).fetchone()
+    if existing:  # already on the list / in the library: it's yours now
+        conn.execute("UPDATE items SET source='manual', store=COALESCE(?, store) WHERE id=?",
+                     ((store or "").strip() or None, existing["id"]))
+        return existing["id"]
+    return conn.execute(
+        "INSERT INTO items(volume_uid, rel_path, is_dir, category, platform, title, year, source, "
+        "steam_appid, external_url, kind, store, added_at) "
+        "VALUES(?, ?, 0, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, datetime('now'))",
+        (WANTED_VOLUME, f"{category}/{uuid.uuid4().hex}", category, platform, title, year,
+         steam_appid, url, "series" if category == "tv" else None, (store or "").strip() or None),
     ).lastrowid
 
 

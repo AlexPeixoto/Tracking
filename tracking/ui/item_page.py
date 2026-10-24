@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import os
 from dataclasses import replace
 
@@ -281,6 +282,11 @@ class ItemPage(QScrollArea):
         self.e_year = QSpinBox()
         self.e_year.setRange(0, 2100)
         self.e_year.setSpecialValueText("—")
+        self.e_store = QComboBox()
+        self.e_store.setEditable(True)
+        self.e_store.addItem("")
+        self.e_store.addItems(library.STORES)
+        self.e_store.lineEdit().setPlaceholderText("Xbox app, a console, a disc…")
         self.e_notes = QPlainTextEdit()
         self.e_notes.setPlaceholderText("Your notes…")
         self.e_notes.setFixedHeight(90)
@@ -288,6 +294,8 @@ class ItemPage(QScrollArea):
         form.addRow("Category", self.e_category)
         form.addRow("Platform", self.e_platform)
         form.addRow("Year", self.e_year)
+        self.store_label = QLabel("Played on")
+        form.addRow(self.store_label, self.e_store)
         form.addRow("Notes", self.e_notes)
         right.addLayout(form)
         save_row = QHBoxLayout()
@@ -395,6 +403,10 @@ class ItemPage(QScrollArea):
         self.e_platform.setEnabled(categories.get(item.category).platforms)
         self.e_year.setValue(item.year or 0)
         self.e_notes.setPlainText(item.notes or "")
+        manual = self._by_hand = item.source in ("manual", db.WANTED)
+        self.e_store.setVisible(manual)
+        self.store_label.setVisible(manual)
+        self.e_store.setEditText(item.store or "")
 
         wanted = item.source == db.WANTED
         self.delete_btn.setText("Remove from list" if wanted else "Remove from library")
@@ -406,8 +418,9 @@ class ItemPage(QScrollArea):
             self.open_btn.setEnabled(bool(item.external_url))
             return
         if item.source == "manual":
-            self.location.setText("<b>In your library</b>, no files linked yet<br>A scan that finds "
-                                  "it on disk will link them.")
+            where = f"Played on <b>{html.escape(item.store)}</b>" if item.store else "Added by hand"
+            self.location.setText(f"<b>In your library</b> · {where}<br>No files on your drives; a "
+                                  "scan that finds it on disk links them.")
             self.open_btn.setEnabled(bool(item.external_url))
             return
         if item.source == "steam":
@@ -517,24 +530,28 @@ class ItemPage(QScrollArea):
         setup = item.install_state == install.INSTALLER
         self.play_btn.setText("▶  Run setup" if setup else "▶  Play")
         target = launcher.target_path(item, mount) if item.launch_path else None
-        can = bool(item.steam_appid) or (bool(item.launch_path) and (mount is not None
-                                                                     or bool(target)))
+        steam = launcher.via_steam(item)
+        can = steam or (bool(item.launch_path) and (mount is not None or bool(target)))
         self.play_btn.setEnabled(can and not item.missing)
+        # Played somewhere else (Xbox app, a console): nothing to start from here.
+        self.play_btn.setVisible(can or not (item.source == "manual" and item.store))
         bits = []
         if item.install_state:
             bits.append(install.STATES.get(item.install_state, item.install_state))
         if item.launch_path and item.source != db.STEAM:
             bits.append(f"starts {item.launch_path.rsplit('/', 1)[-1]}")
-        elif item.steam_appid:
+        elif steam:
             bits.append("starts in Steam")
+        elif item.source == "manual" and item.store:
+            bits.append(f"played on {item.store}")
         if item.last_launched:
             n = item.launch_count
             bits.append(f"last played {item.last_launched[:10]}" + (f" · {n} times" if n > 1 else ""))
-        if not item.launch_path and not item.steam_appid:
+        if not item.launch_path and not steam and not (item.source == "manual" and item.store):
             bits.append("nothing to start found: Launch options › Choose file")
         elif item.volume_uid.startswith(devices.PREFIX):
             bits.append("on an Android device: play it there")
-        elif not mount and not item.steam_appid:
+        elif not mount and not steam and item.source != "manual":
             bits.append("drive not connected")
         self.play_info.setText("  ·  ".join(bits))
 
@@ -619,7 +636,8 @@ class ItemPage(QScrollArea):
             lookup_changed = library.edit_item(
                 conn, self.item, title=self.e_title.text(), category=self.e_category.currentData(),
                 platform=self.e_platform.currentData(), year=self.e_year.value() or None,
-                notes=self.e_notes.toPlainText())
+                notes=self.e_notes.toPlainText(),
+                store=self.e_store.currentText() if getattr(self, "_by_hand", False) else None)
         self.changed.emit(self.item.id)
         if lookup_changed:
             self.refetch.emit(self.item.id)

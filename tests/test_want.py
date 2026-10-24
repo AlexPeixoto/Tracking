@@ -80,3 +80,43 @@ def test_dialog_adds_selected_results(tmp_path, monkeypatch):
     with db.session() as c:
         assert [(i.title, i.steam_appid) for i in db.list_items(c)] == [("Hades II", 1145350)]
     assert Path(tmp_path).exists()
+
+
+def test_add_owned_goes_straight_to_the_library(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRACKING_DATA_DIR", str(tmp_path / "data"))
+    from tracking import db, library
+
+    conn = db.connect()
+    iid = library.add_owned(conn, "game", " Gears of War: E-Day ", 2026, None, None,
+                            "Xbox Series", "Xbox app / Game Pass")
+    item = db.get_item(conn, iid)
+    assert (item.title, item.source, item.platform, item.store) == (
+        "Gears of War: E-Day", "manual", "Xbox Series", "Xbox app / Game Pass")
+    assert library.add_owned(conn, "game", "gears of war: e-day", platform="Xbox Series") == iid
+    wish = library.add_wanted(conn, "game", "Okami")
+    assert library.add_owned(conn, "game", "Okami", store="Physical disc / cartridge") == wish
+    assert db.get_item(conn, wish).source == "manual"                     # bought it after all
+    library.edit_item(conn, item, title=item.title, category="game", platform="PC", year=2026,
+                      notes=None, store="")
+    assert db.get_item(conn, iid).store is None
+    movie = library.add_owned(conn, "movie", "Dune", platform="PC", store="Streaming")
+    assert db.get_item(conn, movie).platform is None                      # movies have no platform
+    conn.close()
+
+
+def test_hand_added_game_plays_where_you_said(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRACKING_DATA_DIR", str(tmp_path / "data"))
+    import pytest
+
+    from tracking import db, launcher, library
+
+    conn = db.connect()
+    xbox = db.get_item(conn, library.add_owned(conn, "game", "Gears of War: E-Day", 2026, 1234560,
+                                               None, "Xbox Series", "Xbox app / Game Pass"))
+    assert not launcher.via_steam(xbox)                        # the Steam id is only for metadata
+    with pytest.raises(launcher.LaunchError, match="Xbox app"):
+        launcher.plan(conn, xbox, None)
+    pc = db.get_item(conn, library.add_owned(conn, "game", "Hades", None, 1145360, None, "PC", "Steam"))
+    assert launcher.via_steam(pc)
+    assert launcher.plan(conn, pc, None).url == "steam://rungameid/1145360"
+    conn.close()

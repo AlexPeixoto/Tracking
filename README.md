@@ -146,7 +146,7 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 |---|---|
 | **F5** · Rescan | Pick locations; optionally mark items no longer found as completed. Unplugged drives are re-processed from their snapshot |
 | **Update metadata** | Fetch what's missing (items without a cover are retried) |
-| **Ctrl+N** | Add to *Want to acquire*, or a *Completed* entry when you're there |
+| **Ctrl+N** · + Add… | Add something you have that no scan finds (Game Pass, a console, a disc) with where you play it; on *Want to acquire* it goes on that list, on *Completed* it's a finished entry |
 | **Right-click** | Move to another section / platform, complete, refetch, remove |
 | **Export list…** | A spreadsheet of the items missing a cover or scores, or of what's shown |
 | **What should I play?** (Ctrl+R) | A random pick from Up next / your backlog, with filters |
@@ -171,7 +171,7 @@ holds (or leave *Auto-detect*), and it's scanned right away. Then:
 | Ctrl+A | Select everything shown |
 | Ctrl+F · Esc | Search · clear the search |
 | Esc · Alt+← | Back from an item page |
-| F5 · Ctrl+N · Ctrl+L | Rescan · add (wish list / completed) · locations |
+| F5 · Ctrl+N · Ctrl+L | Rescan · add (library / wish list / completed) · locations |
 </details>
 
 ## Completed, by year

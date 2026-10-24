@@ -94,12 +94,22 @@ def target_path(item: db.Item, mount: str | None) -> str | None:
     return volumes.join(mount, p) if mount else None
 
 
+def via_steam(item: db.Item) -> bool:
+    """Play goes through Steam: it's a Steam game, unless you added it by hand and said
+    you play it somewhere else ("Xbox app / Game Pass", a console...)."""
+    if not item.steam_appid:
+        return False
+    return not (item.source == "manual" and item.store and "steam" not in item.store.lower())
+
+
 def plan(conn: sqlite3.Connection, item: db.Item, mount: str | None) -> Launch:
     """Work out how to start ``item``; LaunchError says what's missing."""
     if item.category != "game":
         raise LaunchError("Only games can be played from here for now.")
-    if item.steam_appid and (item.source == db.STEAM or not item.launch_path):
+    if via_steam(item) and (item.source == db.STEAM or not item.launch_path):
         return Launch(item.id, f"{item.title} in Steam", url=f"steam://rungameid/{item.steam_appid}")
+    if not item.launch_path and item.source == "manual" and item.store:
+        raise LaunchError(f"You play {item.title} on {item.store}: start it there.")
     if not item.launch_path:
         raise LaunchError(f"No game file found for {item.title}. Pick one on its page "
                           "(Launch options › Choose file…).")
