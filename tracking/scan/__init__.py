@@ -10,8 +10,9 @@
 
 from .merge import collect
 from .model import GROUP_SEP, FileEntry, FoundItem, ScanResult, VolumeOffline, fs_path
-from .store import NoSnapshot, add_root, mount_for, scan_root
+from .store import NoSnapshot, add_device_root, add_root, mount_for, scan_root
 from .walk import root_hints, walk
 
-__all__ = ["GROUP_SEP", "FileEntry", "FoundItem", "NoSnapshot", "ScanResult", "VolumeOffline", "add_root",
-           "collect", "fs_path", "mount_for", "root_hints", "scan_root", "walk"]
+__all__ = ["GROUP_SEP", "FileEntry", "FoundItem", "NoSnapshot", "ScanResult", "VolumeOffline",
+           "add_device_root", "add_root", "collect", "fs_path", "mount_for", "root_hints",
+           "scan_root", "walk"]

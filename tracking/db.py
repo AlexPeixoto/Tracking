@@ -201,6 +201,7 @@ MIGRATIONS = [
     ("items", "plan_position", "INTEGER"),  # order within "Up next"
     ("items", "plan_changed", "TEXT"),      # when it last moved on the board
     ("items", "cover_pinned", "INTEGER NOT NULL DEFAULT 0"),  # a cover you picked: refetch keeps it
+    ("volumes", "name", "TEXT"),            # your name for a drive / device (label: the system's)
 ]
 
 

@@ -208,7 +208,8 @@ def apply(conn: sqlite3.Connection, p: Plan) -> int:
 
 
 def describe(conn: sqlite3.Connection, volume_uid: str, rel: str) -> str:
-    r = conn.execute("SELECT label, last_mount FROM volumes WHERE uid=?", (volume_uid,)).fetchone()
+    r = conn.execute("SELECT COALESCE(name, label) AS label, last_mount FROM volumes WHERE uid=?",
+                     (volume_uid,)).fetchone()
     where = (r["label"] or r["last_mount"] or "drive") if r else "drive"
     return f"{where}:/{fs_path(rel)}"
 

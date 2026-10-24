@@ -161,7 +161,10 @@ class SnapshotFS(RealFS):
         self.root, self.dirs, self.probes = root, dirs, probes
 
     def _rel(self, path: str) -> str | None:
-        rel = os.path.relpath(path, self.root)
+        try:
+            rel = os.path.relpath(path, self.root)
+        except ValueError:  # another drive (or a device): not in this record
+            return None
         if rel.startswith(".."):
             return None
         return "" if rel == "." else rel.replace("\\", "/")

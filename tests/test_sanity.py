@@ -118,3 +118,14 @@ def test_later_season_borrows_the_first_seasons_cover(conn):
     poster = conn.execute("SELECT poster FROM items WHERE id=?", (s2,)).fetchone()[0]
     assert (paths.posters_dir() / poster).read_bytes() == b"cover of Agent AIKa"
     assert not enrich.borrow_season_cover(conn, s2)                    # has one now
+
+
+def test_windows_boot_and_recovery_partitions_arent_offered():
+    from tracking import volumes
+
+    guid = r"\\?\Volume{2af49aa6-d090-4e16-beea-078c1256d94b}" + "\\"
+    recovery = volumes.Volume("guid:x", None, "", guid)
+    assert volumes.is_system_partition(recovery, 985_657_344)            # 0.9 GB, no letter
+    assert not volumes.is_system_partition(recovery, 500 * 1024**3)       # a big letterless disk
+    assert not volumes.is_system_partition(volumes.Volume("guid:y", None, "SNES", guid), 10**8)
+    assert not volumes.is_system_partition(volumes.Volume("guid:z", None, "", "E:\\"), 10**8)

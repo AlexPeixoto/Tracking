@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from .. import db, paths, titles, volumes
+from .. import db, devices, paths, titles, volumes
 from . import classify, fs
 from .merge import collect
 from .model import FoundItem, ScanResult, VolumeOffline, fs_path
@@ -39,6 +39,28 @@ def add_root(conn: sqlite3.Connection, path: str, category: str = "auto",
 
 
 ACCOUNT_PREFIX = "steam:"  # volume uid of an online account (sources/steam.py)
+
+
+def add_device_root(conn: sqlite3.Connection, st: devices.Storage, folder: str = "",
+                    category: str = "auto", platform: str | None = None) -> int:
+    """A folder on an Android device's storage (devices.py) as a location."""
+    folder = folder.strip("/")
+    conn.execute(
+        "INSERT INTO volumes(uid, serial, label, last_mount) VALUES(?,?,?,?) "
+        "ON CONFLICT(uid) DO UPDATE SET label=excluded.label",
+        (st.uid, None, st.label, None))
+    conn.execute(
+        "INSERT INTO roots(volume_uid, rel_path, category, platform) VALUES(?,?,?,?) "
+        "ON CONFLICT(volume_uid, rel_path) DO UPDATE SET category=excluded.category, "
+        "platform=excluded.platform", (st.uid, folder, category, platform))
+    return conn.execute("SELECT id FROM roots WHERE volume_uid=? AND rel_path=?",
+                        (st.uid, folder)).fetchone()["id"]
+
+
+def _device_path(volume_uid: str) -> str:
+    """A stand-in path for a device storage: names things, is never opened."""
+    name = "".join(ch if ch.isalnum() else "_" for ch in volume_uid[len(devices.PREFIX):])
+    return f"\\\\device\\{name}\\"
 
 
 def mount_for(conn: sqlite3.Connection, volume_uid: str,
@@ -73,10 +95,26 @@ def scan_root(conn: sqlite3.Connection, root_id: int,
     if root["volume_uid"].startswith(ACCOUNT_PREFIX):
         from ..sources import steam
         return steam.sync(conn, root_id, progress=progress, cancelled=cancelled)
-    if from_snapshot:
+    device = root["volume_uid"].startswith(devices.PREFIX)
+    if device and not from_snapshot:
+        # An Android device: read its folders through Windows' device API, then scan
+        # that listing like a snapshot (which it also becomes).
+        st = devices.find(root["volume_uid"])
+        if st is None:
+            raise VolumeOffline(root["volume_uid"])
+        mount = _device_path(root["volume_uid"])
+        root_abs = volumes.join(mount, root["rel_path"])
+        try:
+            listing = devices.read_tree(st, root["rel_path"], progress=progress, cancelled=cancelled)
+        except devices.DeviceOffline as e:
+            raise VolumeOffline(root["volume_uid"]) from e
+        disk = fs.SnapshotFS(root_abs, listing, {})
+        disk.volume_uid, disk.mount = root["volume_uid"], mount
+    elif from_snapshot:
         # Where the drive was last seen (only used to name paths; nothing is read there).
         r = conn.execute("SELECT last_mount FROM volumes WHERE uid=?", (root["volume_uid"],)).fetchone()
-        mount = (r and r["last_mount"]) or f"\\\\snapshot\\{root['volume_uid'][:8]}\\"
+        mount = (r and r["last_mount"]) or (
+            _device_path(root["volume_uid"]) if device else f"\\\\snapshot\\{root['volume_uid'][:8]}\\")
         root_abs = volumes.join(mount, root["rel_path"])
         disk = fs.load(conn, root_id, root_abs)
         if disk is None:
@@ -105,10 +143,11 @@ def scan_root(conn: sqlite3.Connection, root_id: int,
             conn.commit()
 
     if not cancelled() and not from_snapshot:
-        if progress:
-            progress("Saving the folder tree")
-        extra = disk.complete(classify.is_skipped, cancelled)
-        log.debug("snapshot of %s: %d folders the scan skipped added", root_abs, extra)
+        if isinstance(disk, fs.RecordingFS):  # a device listing is complete already
+            if progress:
+                progress("Saving the folder tree")
+            extra = disk.complete(classify.is_skipped, cancelled)
+            log.debug("snapshot of %s: %d folders the scan skipped added", root_abs, extra)
         files = fs.save(conn, root_id, disk, now)
         log.info("snapshot of %s: %d files", root_abs, files)
         conn.commit()

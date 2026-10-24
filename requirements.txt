@@ -4,3 +4,4 @@ guessit>=3.8
 pymediainfo>=6.1
 howlongtobeatpy>=1.0.5
 rapidfuzz>=3.0
+comtypes>=1.4; sys_platform == 'win32'

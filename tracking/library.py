@@ -85,6 +85,12 @@ def remove_items(conn: sqlite3.Connection, item_ids: list[int]) -> None:
     conn.executemany("DELETE FROM items WHERE id=?", [(i,) for i in item_ids])
 
 
+def rename_volume(conn: sqlite3.Connection, volume_uid: str, name: str | None) -> None:
+    """Your own name for a drive / device, shown instead of its label ("" or None: the
+    label again). Kept when the drive is scanned or added again."""
+    conn.execute("UPDATE volumes SET name=? WHERE uid=?", ((name or "").strip() or None, volume_uid))
+
+
 def remove_locations(conn: sqlite3.Connection, root_ids: list[int], keep_items: bool) -> None:
     """Stop scanning locations. Their items stay in the library (with completion
     and notes) unless ``keep_items`` is False."""

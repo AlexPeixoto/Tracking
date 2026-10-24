@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
-from .. import categories, completions, db, launcher, library, platforms, scan, titles, volumes
+from .. import categories, completions, db, devices, launcher, library, platforms, scan, titles, volumes
 from ..scan import install
 from ..sources import steam
 from . import dialogs
@@ -549,8 +549,8 @@ class MainWindow(QMainWindow):
 
     def _offline(self, item: db.Item) -> bool:
         """On a drive that isn't connected (Steam / wish-list items never are)."""
-        if item.source in (db.WANTED, "manual") or item.volume_uid.startswith("steam:"):
-            return False
+        if item.source in (db.WANTED, "manual") or item.volume_uid.startswith(("steam:", devices.PREFIX)):
+            return False  # elsewhere by nature: an account, a wish, an Android device
         return self.mounts.get(item.volume_uid) is None
 
     def _toggle_selected(self):
@@ -620,10 +620,11 @@ class MainWindow(QMainWindow):
     def refresh_volumes(self):
         known = volumes.list_volumes()
         with db.session() as conn:
-            rows = conn.execute("SELECT uid, label FROM volumes").fetchall()
+            rows = conn.execute("SELECT uid, COALESCE(name, label) AS label FROM volumes").fetchall()
             self.mounts = {r["uid"]: scan.mount_for(conn, r["uid"], known) for r in rows}
             self.labels = {r["uid"]: r["label"] or "(no label)" for r in rows}
-        self.model.offline_volumes = {u for u, m in self.mounts.items() if not m}
+        self.model.offline_volumes = {u for u, m in self.mounts.items()
+                                      if not m and not u.startswith(devices.PREFIX)}
         with db.session() as conn:
             self.model.offline_style = db.get_setting(conn, "offline_style", OFFLINE_TEXT)
 
@@ -794,9 +795,9 @@ class MainWindow(QMainWindow):
         """The Locations dropdown: All, then one checkbox per location with its item count."""
         with db.session() as conn:
             rows = conn.execute(
-                "SELECT r.id, r.volume_uid, r.rel_path, v.label, "
+                "SELECT r.id, r.volume_uid, r.rel_path, COALESCE(v.name, v.label) AS label, "
                 "(SELECT count(*) FROM items i WHERE i.root_id=r.id) n "
-                "FROM roots r JOIN volumes v ON v.uid=r.volume_uid ORDER BY v.label, r.rel_path").fetchall()
+                "FROM roots r JOIN volumes v ON v.uid=r.volume_uid ORDER BY label, r.rel_path").fetchall()
         if self.loc_only is not None:
             self.loc_only &= {r["id"] for r in rows}  # removed locations drop out
         self.loc_menu.clear()
@@ -1134,6 +1135,9 @@ class MainWindow(QMainWindow):
                 QDesktopServices.openUrl(QUrl(item.external_url))
             return
         mount = self.mounts.get(item.volume_uid) if item else None
+        if item and item.volume_uid.startswith(devices.PREFIX):
+            QMessageBox.information(self, "On a device", "It's on an Android device: open it there.")
+            return
         if not item or not mount:
             QMessageBox.information(self, "Offline", "That drive isn't connected right now.")
             return

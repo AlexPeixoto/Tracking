@@ -34,8 +34,9 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     # babelfish / guessit / rebulk import their converters and rules by name at runtime.
+    # comtypes (Android devices, tracking/devices.py) loads its COM support by name too.
     hiddenimports=(collect_submodules("babelfish") + collect_submodules("guessit")
-                   + collect_submodules("rebulk")),
+                   + collect_submodules("rebulk") + collect_submodules("comtypes")),
     excludes=excludes,
 )
 

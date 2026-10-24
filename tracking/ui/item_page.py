@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import categories, db, enrich, library, platforms
+from .. import categories, db, devices, enrich, library, platforms
 from . import theme
 from .grid import fmt_hours, posters
 
@@ -419,6 +419,8 @@ class ItemPage(QScrollArea):
             return
         if item.missing:
             status = "not found on its last scan"
+        elif item.volume_uid.startswith(devices.PREFIX):
+            status = "on an Android device (open and play it there)"
         elif mount:
             status = f"online at {mount}"
         else:
@@ -530,6 +532,8 @@ class ItemPage(QScrollArea):
             bits.append(f"last played {item.last_launched[:10]}" + (f" · {n} times" if n > 1 else ""))
         if not item.launch_path and not item.steam_appid:
             bits.append("nothing to start found: Launch options › Choose file")
+        elif item.volume_uid.startswith(devices.PREFIX):
+            bits.append("on an Android device: play it there")
         elif not mount and not item.steam_appid:
             bits.append("drive not connected")
         self.play_info.setText("  ·  ".join(bits))

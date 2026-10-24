@@ -95,7 +95,8 @@ class ScanJob(Job):
                 res = self._replay(conn, rid) if self.use_snapshots else None
                 if res is None:
                     row = conn.execute(
-                        "SELECT v.label, r.rel_path FROM roots r JOIN volumes v ON v.uid=r.volume_uid "
+                        "SELECT COALESCE(v.name, v.label) AS label, r.rel_path FROM roots r "
+                        "JOIN volumes v ON v.uid=r.volume_uid "
                         "WHERE r.id=?", (rid,)).fetchone()
                     offline.append(f"{row['label'] or 'drive'}:/{row['rel_path']}")
                     continue

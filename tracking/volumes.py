@@ -16,6 +16,7 @@ Elsewhere
 from __future__ import annotations
 
 import os
+import shutil
 import string
 from dataclasses import dataclass
 from pathlib import Path
@@ -201,6 +202,24 @@ else:
 
 
 # --------------------------------------------------------------------------- common
+
+SYSTEM_PARTITION_BYTES = 2 * 1024**3
+
+
+def size_of(v: Volume) -> int | None:
+    try:
+        return shutil.disk_usage(v.mount).total
+    except OSError:
+        return None
+
+
+def is_system_partition(v: Volume, size: int | None = None) -> bool:
+    """Windows' hidden boot (EFI) / recovery partitions: no drive letter, no label and
+    small. Not somewhere you keep a library, so the drive list leaves them out."""
+    if not v.mount.startswith("\\\\?\\") or v.label:
+        return False
+    size = size_of(v) if size is None else size
+    return size is not None and size < SYSTEM_PARTITION_BYTES
 
 def resolve(uid: str, serial: str | None = None, volumes: list[Volume] | None = None) -> Volume | None:
     """Find where a known volume is mounted right now, or None if it's offline."""

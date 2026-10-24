@@ -268,8 +268,10 @@ def _merge(src: sqlite3.Connection, covers_dir: Path) -> ImportResult:
     posters = paths.posters_dir()
     with db.session() as dst:
         for r in src.execute("SELECT * FROM volumes"):
-            dst.execute("INSERT OR IGNORE INTO volumes(uid, serial, label, last_mount) VALUES(?,?,?,?)",
-                        (r["uid"], r["serial"], r["label"], r["last_mount"]))
+            dst.execute("INSERT OR IGNORE INTO volumes(uid, serial, label, last_mount, name) "
+                        "VALUES(?,?,?,?,?)", (r["uid"], r["serial"], r["label"], r["last_mount"],
+                                              # a Row's "in" looks at values: keys() it is
+                                              r["name"] if "name" in r.keys() else None))  # noqa: SIM118
         root_map: dict[int, int] = {}
         for r in src.execute("SELECT * FROM roots"):
             dst.execute("INSERT OR IGNORE INTO roots(volume_uid, rel_path, category, platform) "

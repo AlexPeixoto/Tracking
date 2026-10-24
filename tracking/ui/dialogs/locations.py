@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ... import categories, db, library, platforms, scan, volumes
+from ... import categories, db, devices, library, platforms, scan, volumes
 from ...scan import fs as scan_fs
 from ...sources import steam
 
@@ -46,9 +47,16 @@ class AddLocationDialog(QDialog):
         # Whole drives, including ones without a drive letter.
         self.drive = QComboBox()
         self.drive.addItem("Pick a whole drive… (or browse for a folder below)", None)
+        with db.session() as conn:
+            names = {r["uid"]: r["name"] for r in conn.execute(
+                "SELECT uid, name FROM volumes WHERE name IS NOT NULL")}
         for v in volumes.list_volumes():
+            size = volumes.size_of(v)
+            if volumes.is_system_partition(v, size):
+                continue  # Windows' boot / recovery partitions
             where = "no drive letter" if v.mount.startswith("\\\\?\\") else v.mount
-            self.drive.addItem(f"{v.label or '(no label)'} — {where}", v.mount)
+            gb = f", {size / 1024**3:,.0f} GB" if size else ""
+            self.drive.addItem(f"{names.get(v.uid) or v.label or '(no label)'} — {where}{gb}", v.mount)
         self.drive.currentIndexChanged.connect(
             lambda: self.drive.currentData() and self.path.setText(self.drive.currentData()))
         form.addRow("Drive", self.drive)
@@ -126,6 +134,108 @@ class AddLocationDialog(QDialog):
 
     def values(self) -> tuple[str, str, str | None]:
         return self.path.text(), self.category.currentData(), self.platform.currentData()
+
+
+class AddDeviceDialog(QDialog):
+    """A folder on an Android device (phone, handheld) plugged in by USB."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Android device")
+        self.setMinimumWidth(520)
+        form = QFormLayout(self)
+        intro = QLabel("Plug the device in by USB (and unlock it). Its games are read from the folder "
+                       "you pick; they show up in the library but are played on the device.")
+        intro.setWordWrap(True)
+        form.addRow(intro)
+
+        self.storages: list[devices.Storage] = []
+        self.storage = QComboBox()
+        self.storage.currentIndexChanged.connect(self._load_folders)
+        refresh = QPushButton("Refresh")
+        refresh.setToolTip("Look for devices again")
+        refresh.clicked.connect(self._load_storages)
+        row = QHBoxLayout()
+        row.addWidget(self.storage, 1)
+        row.addWidget(refresh)
+        form.addRow("Device", row)
+
+        self.folder = QComboBox()
+        self.folder.setEditable(True)  # a deeper folder can be typed: "Emulation/roms"
+        form.addRow("Folder", self.folder)
+
+        self.category = QComboBox()
+        for k, v in CATEGORY_LABELS.items():
+            self.category.addItem(v, k)
+        self.category.setCurrentIndex(max(0, self.category.findData("game")))
+        form.addRow("Contains", self.category)
+        self.platform = QComboBox()
+        self.platform.addItem("Detect from folders / files", None)
+        for p in platforms.NAMES:
+            self.platform.addItem(p, p)
+        form.addRow("Platform", self.platform)
+
+        self.status = QLabel()
+        self.status.setObjectName("Muted")
+        self.status.setWordWrap(True)
+        form.addRow(self.status)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.ok = buttons.button(QDialogButtonBox.Ok)
+        self.ok.setText("Add and scan")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self._load_storages()
+
+    def _load_storages(self) -> None:
+        QGuiApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.storages = devices.list_storages()
+        finally:
+            QGuiApplication.restoreOverrideCursor()
+        self.storage.blockSignals(True)
+        self.storage.clear()
+        for st in self.storages:
+            gb = f" ({st.size / 1024**3:,.0f} GB)" if st.size else ""
+            self.storage.addItem(st.label + gb)
+        self.storage.blockSignals(False)
+        self.ok.setEnabled(bool(self.storages))
+        if not devices.available():
+            self.status.setText("Reading Android devices needs Windows.")
+        elif not self.storages:
+            self.status.setText("No device found. Plug it in, unlock it, and if it asks, allow "
+                                "file access (“File transfer” / MTP). Then Refresh.")
+        else:
+            self.status.setText("")
+        self._load_folders()
+
+    def _load_folders(self) -> None:
+        self.folder.clear()
+        st = self.selected()
+        if not st:
+            return
+        try:
+            names = devices.list_folders(st)
+        except Exception as e:  # unplugged meanwhile
+            self.status.setText(f"Couldn't read {st.label}: {e}")
+            names = []
+        self.folder.addItem("(whole storage)", "")
+        for n in names:
+            self.folder.addItem(n, n)
+        # Where emulator front-ends keep games, if there is one.
+        guess = next((i for i in range(self.folder.count())
+                      if (self.folder.itemData(i) or "").lower() in ("emulation", "roms", "games")), 0)
+        self.folder.setCurrentIndex(guess)
+
+    def selected(self) -> devices.Storage | None:
+        i = self.storage.currentIndex()
+        return self.storages[i] if 0 <= i < len(self.storages) else None
+
+    def values(self) -> tuple[devices.Storage | None, str, str, str | None]:
+        text = self.folder.currentText().strip()
+        # A listed folder, "(whole storage)", or a path typed in ("Emulation/roms").
+        folder = "" if text == "(whole storage)" else text.replace("\\", "/").strip("/")
+        return self.selected(), folder, self.category.currentData(), self.platform.currentData()
 
 
 class AddSteamDialog(QDialog):
@@ -218,6 +328,7 @@ class LocationsDialog(QDialog):
         self.resize(820, 380)
         self.added_ids: list[int] = []    # scan right away
         self.rescan_ids: list[int] = []   # open the rescan dialog for these
+        self.renamed = False
         lay = QVBoxLayout(self)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Drive", "Folder", "Contains", "Status", "Volume id"])
@@ -231,6 +342,9 @@ class LocationsDialog(QDialog):
         add = QPushButton("Add…")
         add.setObjectName("Primary")
         add.clicked.connect(self._add)
+        add_device = QPushButton("Add Android device…")
+        add_device.setToolTip("A phone or handheld (AYN Thor, Retroid...) plugged in by USB")
+        add_device.clicked.connect(self._add_device)
         add_steam = QPushButton("Add Steam account…")
         add_steam.setToolTip("Import the games you own on Steam, with play time")
         add_steam.clicked.connect(self._add_steam)
@@ -240,7 +354,11 @@ class LocationsDialog(QDialog):
         remove.clicked.connect(self._remove)
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
-        for b in (add, add_steam, rescan, remove):
+        rename = QPushButton("Rename…")
+        rename.setToolTip("Give the selected drive / device a name of your own (double-click works too)")
+        rename.clicked.connect(self._rename)
+        self.table.cellDoubleClicked.connect(lambda row, col: col == 0 and self._rename())
+        for b in (add, add_device, add_steam, rename, rescan, remove):
             row.addWidget(b)
         row.addStretch(1)
         row.addWidget(close)
@@ -251,9 +369,9 @@ class LocationsDialog(QDialog):
         known = volumes.list_volumes()
         with db.session() as conn:
             rows = conn.execute(
-                "SELECT r.*, v.label, v.serial, "
+                "SELECT r.*, COALESCE(v.name, v.label) AS label, v.label AS system_label, v.serial, "
                 "(SELECT COUNT(*) FROM items i WHERE i.root_id=r.id) n "
-                "FROM roots r JOIN volumes v ON v.uid=r.volume_uid ORDER BY v.label, r.rel_path"
+                "FROM roots r JOIN volumes v ON v.uid=r.volume_uid ORDER BY label, r.rel_path"
             ).fetchall()
             mounts = {r["volume_uid"]: scan.mount_for(conn, r["volume_uid"], known) for r in rows}
         self.table.setRowCount(len(rows))
@@ -264,6 +382,8 @@ class LocationsDialog(QDialog):
                 cat += f" / {r['platform']}"
             if steam.is_account(r["volume_uid"]):
                 status = f"Steam account  ·  {r['n']} games"
+            elif r["volume_uid"].startswith(devices.PREFIX):
+                status = f"Android device  ·  {r['n']} items"
             elif mount:
                 status = f"online at {mount}  ·  {r['n']} items"
             else:
@@ -278,9 +398,34 @@ class LocationsDialog(QDialog):
             for c, text in enumerate(cells):
                 it = QTableWidgetItem(text)
                 it.setData(Qt.UserRole, r["id"])
+                it.setData(Qt.UserRole + 1, r["volume_uid"])
+                if c == 0 and r["label"] != r["system_label"]:
+                    it.setToolTip(f"Your name. The drive calls itself “{r['system_label'] or '(no label)'}”.")
                 self.table.setItem(i, c, it)
         self.table.resizeColumnsToContents()
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+
+    def _rename(self):
+        rows = {i.row() for i in self.table.selectedIndexes()}
+        if len(rows) != 1:
+            QMessageBox.information(self, "Rename", "Select one location to rename its drive.")
+            return
+        cell = self.table.item(rows.pop(), 0)
+        uid = cell.data(Qt.UserRole + 1)
+        with db.session() as conn:
+            v = conn.execute("SELECT label, name FROM volumes WHERE uid=?", (uid,)).fetchone()
+            shared = conn.execute("SELECT COUNT(*) FROM roots WHERE volume_uid=?", (uid,)).fetchone()[0]
+        note = f" (all {shared} locations on it)" if shared > 1 else ""
+        name, ok = QInputDialog.getText(
+            self, "Rename", f"A name for this drive / device{note}. Leave it empty to use "
+            f"its own label (“{v['label'] or 'none'}”).",
+            text=v["name"] or v["label"] or "")
+        if not ok:
+            return
+        with db.session() as conn:
+            library.rename_volume(conn, uid, None if name.strip() == (v["label"] or "") else name)
+        self.renamed = True
+        self._load()
 
     def _selected_ids(self) -> list[int]:
         return sorted({self.table.item(i.row(), 0).data(Qt.UserRole)
@@ -293,6 +438,18 @@ class LocationsDialog(QDialog):
         path, category, platform = dlg.values()
         with db.session() as conn:
             rid = scan.add_root(conn, path, category, platform)
+        self.added_ids.append(rid)
+        self._load()
+
+    def _add_device(self):
+        dlg = AddDeviceDialog(self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        st, folder, category, platform = dlg.values()
+        if not st:
+            return
+        with db.session() as conn:
+            rid = scan.add_device_root(conn, st, folder, category, platform)
         self.added_ids.append(rid)
         self._load()
 
@@ -343,8 +500,8 @@ class RescanDialog(QDialog):
         known = volumes.list_volumes()
         with db.session() as conn:
             rows = conn.execute(
-                "SELECT r.id, r.rel_path, r.volume_uid, v.label FROM roots r "
-                "JOIN volumes v ON v.uid=r.volume_uid ORDER BY v.label, r.rel_path").fetchall()
+                "SELECT r.id, r.rel_path, r.volume_uid, COALESCE(v.name, v.label) AS label FROM roots r "
+                "JOIN volumes v ON v.uid=r.volume_uid ORDER BY label, r.rel_path").fetchall()
             for r in rows:
                 mount = scan.mount_for(conn, r["volume_uid"], known)
                 snap = None if mount else scan_fs.info(conn, r["id"])

@@ -6,8 +6,9 @@ Set-Location $PSScriptRoot
 $py = ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) {
     python -m venv .venv
-    & $py -m pip install -r requirements.txt
 }
+# Every build: new requirements (e.g. comtypes for Android devices) get installed too.
+& $py -m pip install -q -r requirements.txt
 & $py -m pip install -q pyinstaller pillow
 
 $env:PYTHONPATH = $PSScriptRoot

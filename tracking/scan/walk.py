@@ -397,6 +397,24 @@ def _looks_like_container(dir_abs: str) -> bool:
     return subdirs >= 5 or (subdirs >= 3 and not has_exe)
 
 
+def _rom_pile(dir_abs: str) -> bool:
+    """ "GB/old_non_zip" holding hundreds of ROMs: many games, not one. Five or more
+    ROM / archive / disc files with different titles (a multi-disc game's discs and a
+    cue/bin pair share one)."""
+    names = set()
+    try:
+        for e in fs.current().scandir(dir_abs):
+            ext = os.path.splitext(e.name)[1].lower()
+            is_game_file = ext in ROM_EXT or ext in ARCHIVE_EXT or ext in DISC_EXT
+            if e.is_file(follow_symlinks=False) and is_game_file and not classify.is_junk_file(e.name):
+                names.add(titles.normalize(titles.clean_game_title(os.path.splitext(e.name)[0])))
+                if len(names) >= 5:
+                    return True
+    except OSError:
+        pass
+    return False
+
+
 def _is_addon(stem: str) -> bool:
     return titles.is_addon_name(stem) or classify.switch_addon(stem)
 
@@ -431,6 +449,7 @@ def walk(dir_abs: str, dir_rel: str, hints: Hints, depth: int = 0,
             or classify.is_generic_container(e.name)
             or (not hints.category and _has_keyword_child(e.path))
             or _looks_like_container(e.path)
+            or (child_hints.platform not in (None, "PC") and _rom_pile(e.path))  # consoles only
         )
         if container and depth < MAX_DEPTH:
             log.debug("container %s -> %s", rel, child_hints)
