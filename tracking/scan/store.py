@@ -8,9 +8,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from .. import db, paths, titles, volumes
-from . import fs
+from . import classify, fs
 from .merge import collect
 from .model import FoundItem, ScanResult, VolumeOffline, fs_path
+from .videos import is_short_extra
 from .walk import root_hints
 
 log = logging.getLogger(__name__)
@@ -104,6 +105,10 @@ def scan_root(conn: sqlite3.Connection, root_id: int,
             conn.commit()
 
     if not cancelled() and not from_snapshot:
+        if progress:
+            progress("Saving the folder tree")
+        extra = disk.complete(classify.is_skipped, cancelled)
+        log.debug("snapshot of %s: %d folders the scan skipped added", root_abs, extra)
         files = fs.save(conn, root_id, disk, now)
         log.info("snapshot of %s: %d files", root_abs, files)
         conn.commit()
@@ -259,6 +264,8 @@ def _upsert(conn: sqlite3.Connection, root_id: int, volume_uid: str, f: FoundIte
         prev = old.get(v.rel_path)
         unchanged = prev and prev["size_bytes"] == v.size and prev["mtime"] == v.mtime
         dur = prev["duration_sec"] if unchanged else None
+        if is_short_extra(v.rel_path, dur):
+            continue  # measured before: an opening / ending, not an episode
         conn.execute(
             "INSERT INTO media_files(item_id, rel_path, size_bytes, mtime, duration_sec, season, "
             "episode) VALUES(?,?,?,?,?,?,?)",

@@ -10,9 +10,10 @@ import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from . import categories, db, duration, paths, providers, scan, volumes
+from . import categories, db, duration, paths, providers, scan, titles, volumes
 from .providers import Metadata, ProviderError
 from .providers.base import search_variants, session
+from .scan.videos import is_short_extra
 from .scores import RATING_PREF
 
 log = logging.getLogger(__name__)
@@ -27,6 +28,16 @@ def item_abs_path(mount: str, item: db.Item) -> str:
 
 # --------------------------------------------------------------------------- durations
 
+def drop_short_extras(conn: sqlite3.Connection, item_id: int) -> int:
+    """Forget openings / endings / promos counted as episodes (short, and named so)."""
+    rows = conn.execute("SELECT rel_path, duration_sec FROM media_files WHERE item_id=?",
+                        (item_id,)).fetchall()
+    gone = [r["rel_path"] for r in rows if is_short_extra(r["rel_path"], r["duration_sec"])]
+    conn.executemany("DELETE FROM media_files WHERE item_id=? AND rel_path=?",
+                     [(item_id, p) for p in gone])
+    return len(gone)
+
+
 def measure_durations(conn: sqlite3.Connection, item_id: int, mount: str,
                       cancelled: Callable[[], bool] = lambda: False) -> float | None:
     pending = conn.execute(
@@ -40,6 +51,7 @@ def measure_durations(conn: sqlite3.Connection, item_id: int, mount: str,
             "UPDATE media_files SET duration_sec=? WHERE item_id=? AND rel_path=?",
             (secs if secs is not None else 0.0, item_id, r["rel_path"]),
         )
+    drop_short_extras(conn, item_id)  # a 1-minute "Opening 01" isn't an episode
     total = conn.execute(
         "SELECT SUM(duration_sec) s FROM media_files WHERE item_id=?", (item_id,)
     ).fetchone()["s"]
@@ -80,6 +92,46 @@ def _save_poster(item_id: int, src_path: str | None = None, url: str | None = No
         (paths.posters_dir() / name).write_bytes(r.content)
         return name
     return None
+
+
+_SEASON_SUFFIX = re.compile(r"(?i)\s+(?:season|s)\s*\d+$")
+
+
+def borrow_season_cover(conn: sqlite3.Connection, item_id: int) -> bool:
+    """A later season nothing has a cover for ("Agent AIKa Season 2": no service knows that
+    name) shows the first season's cover instead of a blank card. A copy, so it survives
+    the first season being removed; a real cover found later replaces it on refetch."""
+    row = conn.execute(
+        "SELECT id, volume_uid, rel_path, COALESCE(user_title, title) AS title, "
+        "COALESCE(user_category, category) AS category, season, poster FROM items WHERE id=?",
+        (item_id,)).fetchone()
+    if not row or row["poster"] or not categories.get(row["category"]).episodic:
+        return False
+    base = _SEASON_SUFFIX.sub("", row["title"])
+    if base == row["title"] and not (row["season"] or 1) > 1:
+        return False
+    folder = row["rel_path"].split(scan.GROUP_SEP)[0]
+    show = titles.normalize(base)
+    def same_folder(c) -> bool:
+        return c["volume_uid"] == row["volume_uid"] and c["rel_path"].split(scan.GROUP_SEP)[0] == folder
+
+    # Same show name, or a first season in the same release folder ("Blood Blockade
+    # Battlefront" next to "Blood Blockade Season 2"). Same folder first.
+    cands = [c for c in conn.execute(
+        "SELECT rel_path, volume_uid, COALESCE(user_title, title) AS title, kind, poster FROM items "
+        "WHERE id!=? AND poster IS NOT NULL AND COALESCE(user_category, category)=? "
+        "AND COALESCE(season, 1) <= 1", (item_id, row["category"]))
+        if titles.normalize(c["title"]) == show or (same_folder(c) and c["kind"] == "series")]
+    cands.sort(key=lambda c: (not same_folder(c), titles.normalize(c["title"]) != show))
+    for cand in cands:
+        src = paths.posters_dir() / cand["poster"]
+        if not src.exists():
+            continue
+        name = _save_poster(item_id, src_path=str(src))
+        conn.execute("UPDATE items SET poster=? WHERE id=?", (name, item_id))
+        log.info("no cover for %r: using %r's", row["title"], cand["title"])
+        return True
+    return False
 
 
 # --------------------------------------------------------------------------- metadata
@@ -273,5 +325,7 @@ def enrich_item(conn: sqlite3.Connection, item_id: int, mount: str | None,
         # Nothing found: mark as done unless it failed, so a later run retries errors.
         conn.execute("UPDATE items SET poster=?, enriched_at=? WHERE id=?",
                      (poster, None if warnings else now, item.id))
+    if not poster:
+        borrow_season_cover(conn, item.id)
     conn.commit()
     return warnings

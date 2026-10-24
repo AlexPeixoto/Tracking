@@ -333,10 +333,13 @@ def search_variants(title: str) -> list[str]:
     not_sequel = re.compile(r"(?i)(?:season|part|vol\.?|volume|episode|ep\.?|chapter|s)\s*$")
 
     def roman(m: re.Match) -> str:
-        return m.group(1) if not_sequel.search(m.string[:m.start()]) else _TO_ROMAN[m.group(1)]
+        if not_sequel.search(m.string[:m.start()]):
+            return m.group(1)
+        return _TO_ROMAN.get(m.group(1), m.group(1))  # 10 stays 10 ("X" is a word, not a numeral)
 
     for v in list(out):
-        add(re.sub(r"(?<![\d.])([2-9]|1[0-6])(?![\d.])", roman, v))
+        # Whole numbers only: "10th Anniversary" keeps its "10".
+        add(re.sub(r"(?<![\w.])([2-9]|1[0-6])(?![\w.])", roman, v))
         add(re.sub(r"\b(II|III|IV|V|VI|VII|VIII|IX|XI|XII|XIII|XIV|XV|XVI)\b",
                    lambda m: _ROMAN[m.group(1).lower()], v))
     return out[:8]  # each one can cost a lookup per service

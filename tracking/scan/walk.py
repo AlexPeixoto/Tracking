@@ -376,6 +376,7 @@ def _looks_like_container(dir_abs: str) -> bool:
     unless the sub-folders clearly outnumber that (5+).
     """
     subdirs, has_exe = 0, False
+    folder = titles.normalize(os.path.basename(dir_abs))
     try:
         for e in fs.current().scandir(dir_abs):
             if e.is_dir(follow_symlinks=False):
@@ -385,6 +386,12 @@ def _looks_like_container(dir_abs: str) -> bool:
                     subdirs += 1
             elif e.name.lower().endswith(".exe"):
                 has_exe = True
+                # "30XX/30XX.exe": an installed game, however many folders it has.
+                stem = titles.normalize(os.path.splitext(e.name)[0])
+                if stem and len(stem) >= 3 and (stem in folder or folder in stem):
+                    return False
+            elif classify.is_engine_file(e.name):
+                return False  # steam_api64.dll, UnityPlayer.dll, EOSSDK...: an installed game
     except OSError:
         return False
     return subdirs >= 5 or (subdirs >= 3 and not has_exe)
@@ -410,6 +417,9 @@ def walk(dir_abs: str, dir_rel: str, hints: Hints, depth: int = 0,
         if cancelled():
             return
         if not e.is_dir(follow_symlinks=False) or classify.is_skipped(e.name):
+            continue
+        if classify.is_tool_name(e.name) or classify.is_redist_dir(e.name):
+            log.debug("skip %s: emulator / tool / redistributables", vol_rel(dir_rel, e.name))
             continue
         if hints.category != "game" and is_extra_dir(e.name):
             log.debug("skip %s: extras", vol_rel(dir_rel, e.name))

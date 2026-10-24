@@ -112,3 +112,19 @@ def test_rescan_job_replays_unplugged_locations(tmp_path, conn, monkeypatch):
     summary = workers.ScanJob([rid], enrich_after=False).work(conn)
     assert "1 location from snapshots" in summary
     assert not any(i.missing for i in db.list_items(conn))
+
+
+def test_snapshot_keeps_folders_the_scan_skipped(tmp_path, conn):
+    lib = tmp_path / "lib"
+    touch(lib, "Anime/Show/Show - 01.mkv")
+    touch(lib, "Anime/Extras/Show - Interview.mkv")           # extras next to shows: not opened
+    touch(lib, "Tools/rpcs3/rpcs3.exe")                         # emulator folder: not opened
+    touch(lib, "Tools/rpcs3/dev_hdd0/game/BLUS30161/EBOOT.BIN")
+    touch(lib, "$RECYCLE.BIN/junk.bin")                         # system folder: left out
+    touch(lib, ".hidden/x.bin")
+    rid = scan.add_root(conn, str(lib))
+    scan.scan_root(conn, rid)
+    rels = {r[0] for r in conn.execute("SELECT rel FROM snapshot_dirs WHERE root_id=?", (rid,))}
+    assert {"Anime/Extras", "Tools/rpcs3", "Tools/rpcs3/dev_hdd0/game/BLUS30161"} <= rels
+    assert "$RECYCLE.BIN" not in rels and ".hidden" not in rels
+    assert fs.info(conn, rid)[1] == 4                           # every file but the system ones

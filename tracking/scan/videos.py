@@ -25,10 +25,25 @@ EXTRA_DIRS = {
     "nc op & ed", "ncop-ed", "creditless op & ed", "amv", "amvs", "openings", "endings",
 }
 
-# "NCOP", "NCED2", "AMV1", "OPV3", "PV", "ED 01", "ED Episode 08", "Menu": not episodes.
+# "NCOP", "NCED 2", "AMV1", "OPV3", "PV", "ED 01", "ED Episode 08", "Menu", "Opening 01",
+# "Clean Ending", "MV [Ending]", "CM", "TV-SPOT", "OP (Opening-Intro) Video": not episodes.
 _EXTRA_FILE = re.compile(
-    r"(?i)(?:^|[\s_\-\]])(?:nc\s?(?:op|ed)\w*|ncoped|amv\d*|(?:op|ed)v\d*|pv\d*|menu\d*|teaser\d*|"
-    r"creditless\b.*|credits|splash\s*screen)$|^(?:op|ed)(?:\s*(?:episode|ep\.?)?\s*\d+)?$")
+    r"(?i)(?:^|[\s_\-\]])(?:nc\s?(?:op|ed)\w*(?:\s*\d+)?|ncoped|amv\d*|(?:op|ed)v\d*|pv\s?\d*|menu\d*|"
+    r"teaser\d*|creditless\b.*|credits|splash\s*screen|(?:clean\s+)?(?:opening|ending)(?:\s*\d+[a-z]?)?|"
+    r"mv|cm|tv[\s-]?spot|promo(?:tion)?|(?:full\s+)?preview|(?:op|ed)(?:\s+video|\s*\d+)?|art\s+gallery)$"
+    r"|^(?:op|ed)(?:\s*(?:episode|ep\.?)?\s*\d+)?$")
+# A short video (5 minutes or less) with one of these anywhere in its name is an opening /
+# ending / promo, not an episode: "Mobile Suit GUNDAM 0079 - OP (Opening-Intro) Video.mkv".
+_SHORT_EXTRA = re.compile(
+    r"(?i)(?<![a-z])(?:op|ed|opening|ending|nc\s?op\w*|nc\s?ed\w*|creditless|clean|mv|music\s+video|pv|"
+    r"cm|spot|promo\w*|preview|trailer|teaser|credits?)(?![a-z])")
+SHORT_EXTRA_SECS = 5 * 60
+
+
+def is_short_extra(name: str, secs: float | None) -> bool:
+    """An opening / ending song or promo, told by its length (5 min or less) and name."""
+    stem = titles.strip_ext(name.rsplit("/", 1)[-1])
+    return bool(secs) and secs <= SHORT_EXTRA_SECS and bool(_SHORT_EXTRA.search(stem))
 
 
 def is_extra_file(name: str) -> bool:

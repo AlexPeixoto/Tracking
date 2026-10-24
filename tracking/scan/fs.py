@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -116,6 +116,26 @@ class RecordingFS(RealFS):
         if rel is not None:
             self.dirs[rel] = [[e.name, e.is_dir(), e.stat().st_size, e.stat().st_mtime] for e in entries]
         return entries
+
+    def complete(self, skip: Callable[[str], bool], cancelled: Callable[[], bool] = lambda: False) -> int:
+        """List the folders the scan never opened (extras next to shows, emulator / tool
+        folders...), so the snapshot is the whole tree and later rules can re-process them
+        without the drive. ``skip(name)``: system / hidden folders left out. Returns how
+        many folders were added."""
+        todo = [(rel, e[0]) for rel, entries in list(self.dirs.items()) for e in entries if e[1]]
+        added = 0
+        while todo and not cancelled():
+            parent, name = todo.pop()
+            rel = f"{parent}/{name}" if parent else name
+            if rel in self.dirs or skip(name):
+                continue
+            try:
+                entries = self.scandir(os.path.join(self.root, *rel.split("/")))
+            except OSError:
+                continue
+            added += 1
+            todo += [(rel, e.name) for e in entries if e.is_dir()]
+        return added
 
     def sniff(self, path: str) -> str | None:
         result = super().sniff(path)

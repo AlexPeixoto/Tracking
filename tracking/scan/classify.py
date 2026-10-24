@@ -91,7 +91,8 @@ _GOG_GAMES_NAME = re.compile(r"(?i)^game-.+-\(\d+\)")
 
 _TOOL_NAMES = re.compile(
     r"(?i)(?:^|[\s._\-\[(])(?:firmware|prod\.?keys|title\.?keys|keys|bios|emulator|yuzu|ryujinx|"
-    r"suyu|sudachi|citra|cemu|rpcs3|pcsx2|duckstation|retroarch|dolphin\s*emu)(?:$|[\s._\-\])])")
+    r"suyu|sudachi|citra|cemu|rpcs3|pcsx2|duckstation|retroarch|dolphin\s*emu|shadps4|oldshadps4|"
+    r"ppsspp|xenia|vita3k|melonds|flycast|redream|azahar|cinebench|3dmark|furmark|batchkit)\d*(?:$|[\s._\-\])])")
 
 
 def is_tool_name(stem: str) -> bool:
@@ -215,6 +216,21 @@ JUNK_SUBDIRS = {
     "sample", "samples", "scans", "fonts", "nfo", "covers", "artwork", "screens", "screenshots",
     "monobleedingedge", "d3d12", "redistributables", "_redist", "prerequisites",
 }
+
+
+_ENGINE_FILES = {"steam_api.dll", "steam_api64.dll", "unityplayer.dll", "gameassembly.dll",
+                 "eossdk-win64-shipping.dll", "eossdk-win32-shipping.dll", "galaxy64.dll", "galaxy.dll"}
+_REDIST_DIRS = {"_redist", "redist", "_commonredist", "commonredist", "redistributables",
+                "prerequisites", "_prerequisites", "vcredist", "directx", "dotnet"}
+
+
+def is_engine_file(name: str) -> bool:
+    """Files only an installed PC game has next to its .exe."""
+    return name.lower() in _ENGINE_FILES
+
+
+def is_redist_dir(name: str) -> bool:
+    return name.lower() in _REDIST_DIRS
 
 
 def is_junk_subdir(name: str) -> bool:
