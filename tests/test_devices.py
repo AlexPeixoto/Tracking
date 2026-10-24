@@ -124,3 +124,33 @@ def test_rename_a_drive_and_keep_the_name(conn, tmp_path):
     scan.add_device_root(conn, THOR_SD, "Emulation/roms")
     assert conn.execute("SELECT name FROM volumes WHERE uid=?", (THOR_SD.uid,)).fetchone()[0] == "Thor SD"
     assert rid2
+
+
+def test_numbered_collections_lose_their_index(tmp_path):
+    from tracking import titles
+
+    sms = tmp_path / "SMS"
+    sms.mkdir()
+    for n in ("000 Sonic Blast", "002 Golden Axe", "005 Strider 1", "007 After Burner",
+              "003 The Revenge of Shinobi", "Phantasy Star", "Dragon attack"):
+        (sms / f"{n}.sms").write_bytes(b"x")
+    gba = tmp_path / "GBA"
+    gba.mkdir()
+    (gba / "007 - NightFire.gba").write_bytes(b"x")          # a name, not an index
+    (gba / "1942 (USA).gba").write_bytes(b"x")
+    for n in range(10):
+        (gba / f"Game {chr(65 + n)} (USA).gba").write_bytes(b"x")
+    found = {i.title for i in scan.collect(str(tmp_path), "", Hints())}
+    assert {"Sonic Blast", "Golden Axe", "Strider 1", "After Burner", "The Revenge of Shinobi",
+            "Phantasy Star"} <= found
+    assert {"007 - NightFire", "1942"} <= found
+    assert titles.drop_index("1942 (USA)") == "1942 (USA)"
+    assert titles.drop_index("0121 - Castlevania - Dawn of Sorrow (U)") == "Castlevania - Dawn of Sorrow (U)"
+
+
+def test_lookups_also_try_the_name_without_its_number():
+    from tracking.providers.base import search_variants
+
+    assert search_variants("002 Golden Axe")[:2] == ["002 Golden Axe", "Golden Axe"]
+    assert "Castlevania: Dawn of Sorrow" in search_variants("0121 - Castlevania - Dawn of Sorrow")
+    assert search_variants("1942") == ["1942"]

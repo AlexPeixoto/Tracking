@@ -281,6 +281,12 @@ def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iter
     vids: list[tuple[FileEntry, str]] = []
     game_groups: dict[str, list[fs.Entry]] = {}
     stats: dict[str, fs.Stat] = {}
+    # "000 Sonic Blast.sms", "007 After Burner.sms": a numbered collection. The numbers go;
+    # a lone "1942.zip" or "007 - NightFire.gba" keeps its name.
+    width = titles.index_width([os.path.splitext(e.name)[0] for e in entries
+                                if os.path.splitext(e.name)[1].lower() in _RELEVANT_LOOSE
+                                and os.path.splitext(e.name)[1].lower() not in VIDEO_EXT
+                                and not classify.is_junk_file(e.name)])
     for e in entries:
         ext = os.path.splitext(e.name)[1].lower()
         stem = os.path.splitext(e.name)[0]
@@ -299,6 +305,7 @@ def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iter
             st = stats[e.name]
             vids.append((FileEntry(vol_rel(dir_rel, e.name), st.st_size, st.st_mtime), e.name))
         else:
+            stem = titles.drop_index(stem, width) if width else stem
             title = titles.addon_base_title(stem) if _is_addon(stem) else titles.clean_game_title(stem)
             game_groups.setdefault(titles.normalize(title) or e.name, []).append(e)
 
@@ -338,6 +345,7 @@ def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iter
             log.debug("skip %s: archive/disc without platform hints", vol_rel(dir_rel, first.name))
             continue
         stem = stems[first.name]
+        stem = titles.drop_index(stem, width) if width else stem
         title = titles.addon_base_title(stem) if only_addons else titles.clean_game_title(stem)
         platform, reason = d.platform, d.reason
         if d.category == "game":

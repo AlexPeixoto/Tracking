@@ -308,6 +308,12 @@ def search_variants(title: str) -> list[str]:
             out.append(v)
 
     add(_FIRST_PART.sub("", title))
+    # "002 Golden Axe" / "1330 Rune Factory": a collection's index number in front.
+    unnumbered = titles.drop_index(title)
+    if unnumbered != title:
+        add(unnumbered)
+        if " - " in unnumbered:
+            add(unnumbered.replace(" - ", ": "))
     if " - " in title:
         add(title.replace(" - ", ": "))
         add(title.replace(" - ", " "))

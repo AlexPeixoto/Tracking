@@ -120,6 +120,34 @@ def clean_game_title(name: str) -> str:
     return front_article(smart_title(s)) if s else name
 
 
+# "003 The Revenge of Shinobi", "0121 - Castlevania - Dawn of Sorrow": a collection's index
+# number in front of the name (the name itself must follow, with letters in it).
+_INDEX = re.compile(r"^(\d{1,4})\s*[-_.)]?\s+(?=[^\s(\[{][^(\[{]*[A-Za-z]{2})")
+
+
+def index_width(stems: list[str]) -> int | None:
+    """The digit count of the index numbers a folder's files carry ("000 Sonic Blast",
+    "007 After Burner": 3), or None. Only when many files share it (5+, a fifth of them):
+    "1942" or "007 - NightFire" alone are names, not indexes."""
+    widths: dict[int, int] = {}
+    for s in stems:
+        m = _INDEX.match(s)
+        if m:
+            widths[len(m.group(1))] = widths.get(len(m.group(1)), 0) + 1
+    if not widths:
+        return None
+    width, n = max(widths.items(), key=lambda kv: kv[1])
+    return width if n >= 5 and n * 5 >= len(stems) else None
+
+
+def drop_index(stem: str, width: int | None = None) -> str:
+    """The name without its index number (``width``: only an index that many digits long)."""
+    m = _INDEX.match(stem)
+    if not m or (width is not None and len(m.group(1)) != width):
+        return stem
+    return stem[m.end():]
+
+
 # "Incredible Hulk, The" / "Lord of the Rings, The - The Third Age" (No-Intro / library
 # sort order): the article goes back in front, where every store and database has it.
 _TRAILING_ARTICLE = re.compile(r"^(?P<head>[^,]+?),\s+(?P<art>The|A|An)(?P<rest>(?:\s+[-:(].*)?)$")
