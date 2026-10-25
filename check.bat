@@ -13,4 +13,10 @@ echo == tests + coverage ==
 "%PY%" -m pytest -q --cov --cov-report=term --cov-report=html:"%~dp0build\coverage" || set FAILED=1
 echo.
 echo Coverage report: build\coverage\index.html
+rem Your real library, re-processed with the current rules (only when a baseline exists:
+rem "python -m tracking.scan.replay --save" records one). Any line listed is a change.
+if exist "%LOCALAPPDATA%\Tracking\replay-baseline.tsv" (
+    echo == replay of your library ==
+    "%PY%" -m tracking.scan.replay || set FAILED=1
+)
 if defined FAILED exit /b 1

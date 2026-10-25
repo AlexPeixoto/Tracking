@@ -3,8 +3,14 @@
 A PySide6 desktop app over a SQLite library. Data flows one way:
 
 ```
-drives / folders ──scan──▶ items in SQLite ──enrich──▶ scores, covers, times, episodes ──▶ UI
+drives / folders ─┐
+Android devices ──┼─scan─▶ snapshot (every folder listing) ─▶ items in SQLite ─enrich─▶ scores,
+Steam account ────┘        └─ replayable without the drive          covers, times, episodes ─▶ UI
 ```
+
+Where to go next: rules for *what* the scanner finds → [SCANNING.md](SCANNING.md); how
+titles are looked up and covers chosen → [MATCHING.md](MATCHING.md); tables, settings
+and files → [DATA.md](DATA.md); how to work on the code safely → [WORKFLOW.md](WORKFLOW.md).
 
 ## Layout
 
@@ -21,7 +27,8 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `exporters.py` | Your library in other trackers' formats: MyAnimeList XML (MAL ids via AniList), Letterboxd diary / watchlist CSV, one CSV of everything |
 | `upcoming.py` | "Coming up" for an item page: TVmaze next episode, AniList airing, Steam release date and price / sale (keyless, cached a few hours) |
 | `completions.py` | The Completed log: one row per time you finished something (marking an item completed adds today; year CSVs `name, DD/MM/YYYY` and manual entries add rows outside the library, with their own cover). Editing, ordering, CSV import/export |
-| `volumes.py` | Drive identity: volume GUID + serial, UNC shares, Linux UUIDs; resolves where a drive is mounted now |
+| `volumes.py` | Drive identity: volume GUID + serial, UNC shares, Linux UUIDs; resolves where a drive is mounted now; hides Windows' boot / recovery partitions |
+| `devices.py` | Android phones / handhelds over USB (MTP): lists their storages and reads a folder tree through Windows' device API (WPD, via `comtypes`); the listing is scanned like a snapshot |
 | **Tables** | |
 | `categories.py` | The sections (Anime, Movies, TV Shows, Games, Unknown): label, colours, "Watched/Beaten", episodic? has platform? |
 | `platforms.py` | Every game platform: folder aliases, in-name tokens, each service's spelling |
@@ -33,7 +40,9 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `scan/discid.py` | A disc's own identity, read like an emulator does (also inside .zip): SYSTEM.CNF serial for PS1/PS2 (named via PCSX2's GameIndex), PARAM.SFO for PSP/PS3, Wii/GameCube headers. Used only when the name or platform says too little |
 | `scan/fs.py` | The scanner's disk: the real one (recording a snapshot of every listing and disc header), or a saved snapshot replayed (Rescan of an unplugged drive). The scanner never calls `os` directly for listings, sizes or headers |
 | `scan/install.py` | Installed / installer / ROM-disc, and which file Play starts (scored .exe candidates, preferred disc formats, PS3 EBOOT.BIN) |
-| `scan/videos.py` | Episodes vs movies, one group per series season, extras (NC / AMV / PV folders and files) skipped |
+| `scan/videos.py` | Episodes vs movies, one group per series season, extras (NC / AMV / PV folders and files, short openings / endings) skipped |
+| `scan/naming.py` | What a video folder's item is called: the folder's name or its files' show name (season folders, collection packs, abbreviations, parts of a parent show), and unique item paths for several shows in one folder |
+| `scan/replay.py` | `python -m tracking.scan.replay`: re-process every saved snapshot with the current rules, read-only, and diff against a baseline (the safety net for rule changes, see WORKFLOW.md) |
 | `scan/merge.py` | One item per series season, per game (updates/DLC folded in), per movie (copies folded in) |
 | `scan/store.py` | Saving: upsert, missing items, re-linking moved items, mark-missing-as-completed |
 | `duration.py` | Video runtime from file headers (MediaInfo) |
@@ -42,12 +51,15 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | **Metadata** | |
 | `enrich.py` | Runs the registered services for an item, merges results, saves scores / cover / episodes |
 | `providers/__init__.py` | The registry: which services exist and their priority |
-| `providers/base.py` | `Query`, `Provider`, `Metadata`, `Episode`, HTTP session, cache, rate limiter, fuzzy matching |
+| `providers/base.py` | `Query`, `Provider`, `Metadata`, `Episode`, HTTP session, cache, rate limiter, fuzzy matching (`similarity`, `best_match`) |
+| `providers/variants.py` | Search wording: the ordered rules that suggest other ways to search for a title (index numbers, glued words, " - " → ": ", edition suffixes, abbreviations, numerals) |
 | `providers/<service>.py` | One module per service (anidb, mal, anilist, kitsu, omdb, tmdb, tvmaze, trakt, rawg, igdb, hltb, libretro, opencritic, steam, wikidata) |
 | **UI** `ui/` | |
 | `ui/main_window.py` | Sidebar (library sections, Steam, Want to acquire), grid, job queue, toolbar |
 | `ui/grid.py` | Poster cards (score chips, average, badges) |
 | `ui/item_page.py` | Item page: completion, scores, time, episodes, summary, edits |
+| `ui/dialogs/want.py` | Search a title and add it to *Want to acquire*, or (`to_library`) straight to the library with platform and "Played on" |
+| `ui/dialogs/cover.py` | Search cover on IGDB: pick one of a game's covers; it's kept through refetches |
 | `ui/dialogs/match.py` | Find match: search every service (`providers.search_all`) and use a result as the item's search title (`library.use_match`) |
 | `ui/dialogs/pick.py` | What should I play? (`library.pick_candidates` / `library.pick`) |
 | `ui/dialogs/trackers.py` | Export for other trackers (formats + folder; runs as a job) |
@@ -55,7 +67,7 @@ drives / folders ──scan──▶ items in SQLite ──enrich──▶ score
 | `ui/planning_page.py` | Planning board: Up next / Playing / On hold (items.plan_state, `library.set_plan`) and Done this year (the Completed log); drag & drop, section chips |
 | `ui/completed_page.py` | Completed section: a year's covers (drag to reorder), add / edit / remove, CSV import / export |
 | `ui/year_image.py` | "Export year as image": the year's covers as one grid picture (columns, cover size / shape, gap, margin, background, heading, labels), drawn with Qt |
-| `ui/dialogs/` | `locations.py` (add / manage / rescan, add Steam account), `settings.py` (keys, export/import), `log_viewer.py` |
+| `ui/dialogs/` | `locations.py` (add / manage / rescan / rename, add Android device, add Steam account), `settings.py` (keys, export/import), `log_viewer.py` |
 | `ui/workers.py` | Background jobs (scan, enrich) on a thread pool, each with its own DB connection |
 | `ui/theme.py` | Dark theme, colours, app icon |
 | `packaging/` | PyInstaller spec, entry script, icon renderer (used by `build.ps1`) |
@@ -101,4 +113,4 @@ Add the column to `SCHEMA` in `db.py` **and** to `MIGRATIONS` so existing librar
 
 ## Tests
 
-`pytest` (no network needed): scanner rules on synthetic folder trees, real-world release names, archive export/import, library operations, episode parsers with recorded responses, Steam account import with mocked HTTP, job queue and window close, and consistency checks between the tables.
+See [WORKFLOW.md](WORKFLOW.md) for how to run them and the replay check. `pytest` (no network needed): scanner rules on synthetic folder trees, real-world release names, archive export/import, library operations, episode parsers with recorded responses, Steam account import with mocked HTTP, job queue and window close, and consistency checks between the tables.

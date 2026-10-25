@@ -16,6 +16,8 @@ import requests
 from rapidfuzz import fuzz
 
 from .. import paths, titles
+from .variants import ROMAN as _ROMAN
+from .variants import search_variants  # noqa: F401  (callers import it from here)
 
 USER_AGENT = "Tracking/0.1 (personal media library browser)"
 
@@ -233,9 +235,6 @@ def year_of(date: str | None) -> int | None:
 
 
 _NUMBER = re.compile(r"(?<![\d.])(\d{1,3})(?:st|nd|rd|th)?\b", re.I)
-# Sequel numerals as words. "I" and "X" stay words ("Mega Man X" isn't "Mega Man 10").
-_ROMAN = {"ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8",
-          "ix": "9", "xi": "11", "xii": "12", "xiii": "13", "xiv": "14", "xv": "15", "xvi": "16"}
 
 
 def _words(s: str) -> list[str]:
@@ -283,97 +282,3 @@ def similarity(a: str, b: str) -> float:
     if _numbers(a) != _numbers(b):
         score -= 25
     return score
-
-
-_FIRST_PART = re.compile(r"(?i)\s*(?:\b1st\s+\w+|\bfirst\s+season|\bseason\s*0*1|\bpart\s*0*1|\bs0*1)\s*$")
-
-
-_ABBR = r"(?![IVX]+\b)[A-Z][A-Za-z]{0,3}[A-Z]"  # "UB", "EE", "LDA", "TLoH", "LoTC"
-
-
-# "... - International Edition", "... Director's Cut": the edition, not the game.
-_EDITION = re.compile(
-    r"(?i)(?:\s*[-:]\s*|\s+)(?:international|deluxe|complete|definitive|ultimate|gold|special|limited|"
-    r"collector'?s|enhanced|remastered|anniversary|director'?s|directors|extended|standard|premium|"
-    r"legendary|royal|digital|game of the year|goty)\s+(?:edition|cut|version)$")
-
-
-def search_variants(title: str) -> list[str]:
-    """Other ways to search for a title when the exact one finds nothing.
-
-    * "Show 1st GIG" / "Season 1" / "Part 1" -> "Show" (first seasons often have no number)
-    * "INAZUMA ELEVEN - Victory Road" -> "INAZUMA ELEVEN: Victory Road" / "... Victory Road"
-      (release names swap ':' for ' - ', which store searches don't like)
-    * "RoboCop - Rogue City UB" -> "RoboCop - Rogue City" (drop a trailing edition abbreviation)
-    * "MDA - RAIN CODE Plus" -> "RAIN CODE Plus" (drop a leading series abbreviation)
-    """
-    out = [title]
-
-    def add(v: str) -> None:
-        v = re.sub(r"\s+", " ", v).strip(" -:")
-        if len(v) >= 3 and v not in out:
-            out.append(v)
-
-    add(_FIRST_PART.sub("", title))
-    # "002 Golden Axe" / "1330 Rune Factory": a collection's index number in front.
-    unnumbered = titles.drop_index(title)
-    if unnumbered != title:
-        add(unnumbered)
-        if " - " in unnumbered:
-            add(unnumbered.replace(" - ", ": "))
-    # "GalGun 2" is "Gal*Gun 2" to the services: words glued together in a file name.
-    unglued = re.sub(r"(?<=[a-z])(?=[A-Z][a-z])", " ", unnumbered)
-    if unglued != unnumbered:
-        add(unglued)
-    if " - " in title:
-        add(title.replace(" - ", ": "))
-        add(title.replace(" - ", " "))
-    # "White Knight Chronicles - International Edition" / "... Deluxe Edition": many
-    # services list the game under its plain name only.
-    plain = _EDITION.sub("", title)
-    if plain != title and len(plain) >= 3:
-        add(plain)
-    trimmed = re.sub(rf"\s+{_ABBR}$", "", title)
-    if trimmed != title:
-        add(trimmed)
-        if " - " in trimmed:
-            add(trimmed.replace(" - ", ": "))
-    lead = re.match(rf"^{_ABBR}\s+-\s+(.+)$", title)
-    if lead:
-        add(lead.group(1))
-    # "Fatal Frame 2 Remake" <-> "Fatal Frame II Remake": store searches are literal.
-    # Repack shorthand: "MSG SEED ..." -> "Mobile Suit Gundam SEED ...", "25th AR" -> "25th
-    # Anniversary Remaster". Tried as well as (not instead of) the name as written.
-    expanded = title
-    for short, full in _ABBREVIATIONS.items():
-        expanded = re.sub(rf"(?<![\w-]){re.escape(short)}(?![\w-])", full, expanded)
-    if expanded != title:
-        add(expanded)
-        if " - " in expanded:
-            add(expanded.replace(" - ", ": "))
-    # Not "Season 2" / "Part 2" / "Vol. 2": those are written in digits everywhere.
-    not_sequel = re.compile(r"(?i)(?:season|part|vol\.?|volume|episode|ep\.?|chapter|s)\s*$")
-
-    def roman(m: re.Match) -> str:
-        if not_sequel.search(m.string[:m.start()]):
-            return m.group(1)
-        return _TO_ROMAN.get(m.group(1), m.group(1))  # 10 stays 10 ("X" is a word, not a numeral)
-
-    for v in list(out):
-        # Whole numbers only: "10th Anniversary" keeps its "10".
-        add(re.sub(r"(?<![\w.])([2-9]|1[0-6])(?![\w.])", roman, v))
-        add(re.sub(r"\b(II|III|IV|V|VI|VII|VIII|IX|XI|XII|XIII|XIV|XV|XVI)\b",
-                   lambda m: _ROMAN[m.group(1).lower()], v))
-    return out[:8]  # each one can cost a lookup per service
-
-
-_TO_ROMAN = {d: r.upper() for r, d in _ROMAN.items()}
-
-# Shorthand that repack / release names use for long titles (case-sensitive, whole words).
-_ABBREVIATIONS = {
-    "FF-PZ": "Fatal Frame", "MSG": "Mobile Suit Gundam", "LDA": "Last Defense Academy",
-    "MDA": "Master Detective Archives", "DoA": "Dead or Alive", "AR": "Anniversary Remaster",
-    "KH": "Kingdom Hearts", "SMT": "Shin Megami Tensei", "DQ": "Dragon Quest",
-    "MGS": "Metal Gear Solid", "TLoH": "The Legend of Heroes", "DE": "Definitive Edition",
-    "GOTY": "Game of the Year Edition", "CE": "Complete Edition", "DX": "Deluxe",
-}

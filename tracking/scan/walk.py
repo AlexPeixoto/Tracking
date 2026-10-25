@@ -16,7 +16,7 @@ import os
 from collections.abc import Callable, Iterator
 
 from .. import titles
-from . import classify, discid, fs, install
+from . import classify, discid, fs, install, naming
 from .classify import ARCHIVE_EXT, DISC_EXT, ROM_EXT, VIDEO_EXT, Hints
 from .model import GROUP_SEP, FileEntry, FoundItem, vol_rel
 from .videos import (
@@ -32,6 +32,12 @@ from .videos import (
 log = logging.getLogger(__name__)
 
 MAX_DEPTH = 8
+# A folder of releases rather than one release: this many real sub-folders, or
+# CONTAINER_FOLDERS_WITH_EXE when it also has an .exe of its own (a game's own folders).
+CONTAINER_FOLDERS = 3
+CONTAINER_FOLDERS_WITH_EXE = 5
+# A console folder holding at least this many differently named ROMs is many games.
+ROM_PILE_GAMES = 5
 _RELEVANT_LOOSE = VIDEO_EXT | DISC_EXT | ARCHIVE_EXT | set(ROM_EXT)
 
 
@@ -131,24 +137,7 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
         season = g.season if g else folder.season
         if folder.season and kind == "series":
             season = folder.season
-        # A folder called "Season 2" says nothing about the show's name.
-        # A folder called "Season 2" (or one that still parses to just a number)
-        # says nothing about the show's name: use what the video files say.
-        weak = titles.season_from_dir(name) is not None or titles.is_weak_title(folder.title)
-        # "1a. MSG 0079" in a collection pack: abbreviated; its files say "Mobile Suit GUNDAM 0079".
-        # Not when sibling folders' files share that name: "05 - Nekomonogatari (White)" and
-        # "06 - Kabukimonogatari" both hold "Monogatari Series Second Season - 01.mkv".
-        in_pack = titles.strip_order_prefix(name) != name
-        use_files = g and not titles.is_weak_title(g.title) and (
-            weak or (in_pack and len(g.title) > len(folder.title)
-                     and (_abbreviated(folder.title) or not _shared_by_siblings(dir_abs, g.title))))
-        base = g.title if use_files else folder.title
-        if g and not use_files and not weak and _part_of_parent(g.title, folder.title, dir_rel):
-            base = f"{g.title} {folder.title}"
-        if g and titles.normalize(g.title) and titles.normalize(g.title) == titles.normalize(folder.title):
-            base = folder.title  # "86 (Eighty Six)/[Judas] 86 - S01E01.mkv": "86" really is the name
-        elif titles.is_weak_title(base):  # "4b. OVA (2005)" holding "01.mkv": the collection's name
-            base = _folder_title(base, dir_rel)
+        base = naming.show_title(name, dir_abs, dir_rel, folder, g)
         item = FoundItem(dir_rel, True, d.category, None, display_title(base, kind, season),
                          folder.year or (g.year if g else None),
                          [e for e, _ in g.files] if g else [], count, total,
@@ -158,26 +147,12 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
                   len(item.videos), dir_rel, d.reason)
         return [item]
 
-    # Several seasons / movies in one folder: one item each. Each needs its own path:
-    # "Sekirei" S1 and "Sekirei Pure Engagement" S1 side by side are both "s1", and the
-    # second would overwrite the first when saved. The biggest group keeps the plain one.
-    slugs: dict[int, str] = {}
-    for g in sorted(groups, key=lambda g: -len(g.files)):
-        slug = g.slug
-        if slug in slugs.values():
-            slug = f"{slug}-{titles.normalize(g.title)[:40]}"
-        n = 2
-        while slug in slugs.values():
-            slug, n = f"{g.slug}-{n}", n + 1
-        slugs[id(g)] = slug
+    # Several seasons / movies in one folder: one item each, each with its own path.
+    slugs = naming.unique_slugs(groups)
     items = []
     for g in groups:
         size = sum(e.size for e, _ in g.files)
-        base = g.title
-        if titles.is_weak_title(base):
-            base = folder.title if not titles.is_weak_title(folder.title) else _folder_title(base, dir_rel)
-        elif _part_of_parent(g.title, folder.title, dir_rel):
-            base = f"{g.title} {folder.title}"
+        base = naming.group_title(g, folder, dir_rel)
         item = FoundItem(f"{dir_rel}{GROUP_SEP}{slugs[id(g)]}", True, d.category, None,
                          display_title(base, g.kind, g.season), g.year or folder.year,
                          [e for e, _ in g.files], len(g.files), size,
@@ -187,46 +162,6 @@ def _dir_items(dir_abs: str, dir_rel: str, name: str, hints: Hints) -> list[Foun
                   season_tag(g.season), len(item.videos), item.rel_path)
         items.append(item)
     return items
-
-
-def _part_of_parent(files_title: str, folder_title: str, dir_rel: str) -> bool:
-    """ "Hare + Guu/DELUXE" holding "Hare + Guu DELUXE Ep1.1.mkv": the folder is a part of the
-    show its parent names, so the item is "Hare + Guu DELUXE", not "DELUXE" or "Hare + Guu"."""
-    parts = dir_rel.split("/")
-    if len(parts) < 2 or titles.is_weak_title(folder_title):
-        return False
-    parent = titles.parse_video(titles.strip_order_prefix(parts[-2]), keep_plus=True).title
-    show = titles.normalize(files_title)
-    return bool(show) and show == titles.normalize(parent) and show not in titles.normalize(folder_title)
-
-
-def _abbreviated(title: str) -> bool:
-    """ "FF Extras", "KoF - Destiny", "SamSho", "MSG 0079": a short word with 2+ capitals."""
-    return any(len(w) <= 6 and sum(ch.isupper() for ch in w) >= 2
-               for w in title.replace(".", "").split())
-
-
-def _first_video_title(dir_abs: str) -> str | None:
-    try:
-        for e in sorted(fs.current().scandir(dir_abs), key=lambda e: e.name.lower()):
-            is_video = os.path.splitext(e.name)[1].lower() in VIDEO_EXT
-            if e.is_file(follow_symlinks=False) and is_video and not is_extra_file(e.name):
-                return titles.normalize(titles.parse_video(e.name).title)
-    except OSError:
-        pass
-    return None
-
-
-def _shared_by_siblings(dir_abs: str, files_title: str) -> bool:
-    """Do other folders next to this one hold files with the same show name?"""
-    parent, me = os.path.dirname(dir_abs), os.path.basename(dir_abs)
-    want = titles.normalize(files_title)
-    try:
-        siblings = [e for e in fs.current().scandir(parent)
-                    if e.is_dir(follow_symlinks=False) and e.name != me]
-    except OSError:
-        return False
-    return any(_first_video_title(e.path) == want for e in siblings)
 
 
 _NAMELESS = {"copy", "newfolder", "game", "games", "disc", "disc1", "iso", "rom", "backup", "image"}
@@ -266,15 +201,6 @@ def _launch_candidates(pairs: list[tuple[str, str]]) -> list[tuple[str, int]]:
 
 def _size(path: str) -> int:
     return fs.current().getsize(path)
-
-
-def _folder_title(fallback: str, dir_rel: str) -> str:
-    """The nearest folder above ``dir_rel`` with a real name ("1b" / "OVA" don't count)."""
-    for part in reversed(dir_rel.split("/")[:-1]):
-        t = titles.parse_video(titles.strip_order_prefix(part)).title
-        if not titles.is_weak_title(t):
-            return t
-    return fallback
 
 
 def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iterator[FoundItem]:
@@ -319,7 +245,7 @@ def _loose_items(entries: list[os.DirEntry], dir_rel: str, hints: Hints) -> Iter
         # "01.mkv" files carry no title: the folder they sit in names the show.
         base = g.title
         if titles.is_weak_title(base) and dir_rel:
-            base = _folder_title(base, vol_rel(dir_rel, "x"))
+            base = naming.collection_title(base, vol_rel(dir_rel, "x"))
         item = FoundItem(vol_rel(dir_rel, names[0]), False, d.category, None,
                          display_title(base, g.kind, g.season), g.year,
                          [e for e, _ in g.files], len(g.files), sum(e.size for e, _ in g.files),
@@ -379,9 +305,10 @@ def _has_keyword_child(dir_abs: str) -> bool:
 def _looks_like_container(dir_abs: str) -> bool:
     """A folder with an arbitrary name ("tpex", "stuff") that holds several releases.
 
-    It's a container when it has 3+ sub-folders that aren't part of one release
-    (not MD5 / Data / Subs / Season N / extras...), and no .exe of its own
-    unless the sub-folders clearly outnumber that (5+).
+    It's a container when it has CONTAINER_FOLDERS sub-folders that aren't part of one
+    release (not MD5 / Data / Subs / Season N / extras...) and no .exe of its own, or
+    CONTAINER_FOLDERS_WITH_EXE of them despite an .exe. Never when the .exe is named like
+    the folder ("30XX/30XX.exe") or game-engine files sit next to it: an installed game.
     """
     subdirs, has_exe = 0, False
     folder = titles.normalize(os.path.basename(dir_abs))
@@ -402,12 +329,12 @@ def _looks_like_container(dir_abs: str) -> bool:
                 return False  # steam_api64.dll, UnityPlayer.dll, EOSSDK...: an installed game
     except OSError:
         return False
-    return subdirs >= 5 or (subdirs >= 3 and not has_exe)
+    return subdirs >= CONTAINER_FOLDERS_WITH_EXE or (subdirs >= CONTAINER_FOLDERS and not has_exe)
 
 
 def _rom_pile(dir_abs: str) -> bool:
-    """ "GB/old_non_zip" holding hundreds of ROMs: many games, not one. Five or more
-    ROM / archive / disc files with different titles (a multi-disc game's discs and a
+    """ "GB/old_non_zip" holding hundreds of ROMs: many games, not one. ROM_PILE_GAMES
+    or more ROM / archive / disc files with different titles (a multi-disc game's discs and a
     cue/bin pair share one)."""
     names = set()
     try:
@@ -416,7 +343,7 @@ def _rom_pile(dir_abs: str) -> bool:
             is_game_file = ext in ROM_EXT or ext in ARCHIVE_EXT or ext in DISC_EXT
             if e.is_file(follow_symlinks=False) and is_game_file and not classify.is_junk_file(e.name):
                 names.add(titles.normalize(titles.clean_game_title(os.path.splitext(e.name)[0])))
-                if len(names) >= 5:
+                if len(names) >= ROM_PILE_GAMES:
                     return True
     except OSError:
         pass

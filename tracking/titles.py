@@ -125,6 +125,12 @@ def clean_game_title(name: str) -> str:
 _INDEX = re.compile(r"^(\d{1,4})\s*[-_.)]?\s+(?=[^\s(\[{][^(\[{]*[A-Za-z]{2})")
 
 
+# A folder is a numbered collection when at least this many of its files carry the same
+# index style, and at least one in INDEX_ONE_IN of them do.
+INDEX_MIN_FILES = 5
+INDEX_ONE_IN = 5
+
+
 def index_width(stems: list[str]) -> int | None:
     """The digit count of the index numbers a folder's files carry ("000 Sonic Blast",
     "007 After Burner": 3), or None. Only when many files share it (5+, a fifth of them):
@@ -137,7 +143,7 @@ def index_width(stems: list[str]) -> int | None:
     if not widths:
         return None
     width, n = max(widths.items(), key=lambda kv: kv[1])
-    return width if n >= 5 and n * 5 >= len(stems) else None
+    return width if n >= INDEX_MIN_FILES and n * INDEX_ONE_IN >= len(stems) else None
 
 
 def drop_index(stem: str, width: int | None = None) -> str:

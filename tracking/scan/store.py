@@ -77,6 +77,19 @@ def mount_for(conn: sqlite3.Connection, volume_uid: str,
     return None
 
 
+def snapshot_disk(conn: sqlite3.Connection, root) -> fs.SnapshotFS | None:
+    """A location's saved snapshot, ready to scan (None: never recorded). Only reads."""
+    # Where the drive was last seen (only used to name paths; nothing is read there).
+    r = conn.execute("SELECT last_mount FROM volumes WHERE uid=?", (root["volume_uid"],)).fetchone()
+    device = root["volume_uid"].startswith(devices.PREFIX)
+    mount = (r and r["last_mount"]) or (
+        _device_path(root["volume_uid"]) if device else f"\\\\snapshot\\{root['volume_uid'][:8]}\\")
+    disk = fs.load(conn, root["id"], volumes.join(mount, root["rel_path"]))
+    if disk is not None:
+        disk.volume_uid, disk.mount = root["volume_uid"], mount
+    return disk
+
+
 class NoSnapshot(Exception):
     """The location was never scanned with this version, so there's nothing to replay."""
 
@@ -111,15 +124,10 @@ def scan_root(conn: sqlite3.Connection, root_id: int,
         disk = fs.SnapshotFS(root_abs, listing, {})
         disk.volume_uid, disk.mount = root["volume_uid"], mount
     elif from_snapshot:
-        # Where the drive was last seen (only used to name paths; nothing is read there).
-        r = conn.execute("SELECT last_mount FROM volumes WHERE uid=?", (root["volume_uid"],)).fetchone()
-        mount = (r and r["last_mount"]) or (
-            _device_path(root["volume_uid"]) if device else f"\\\\snapshot\\{root['volume_uid'][:8]}\\")
-        root_abs = volumes.join(mount, root["rel_path"])
-        disk = fs.load(conn, root_id, root_abs)
+        disk = snapshot_disk(conn, root)
         if disk is None:
             raise NoSnapshot(root_id)
-        disk.volume_uid, disk.mount = root["volume_uid"], mount
+        mount, root_abs = disk.mount, disk.root
     else:
         mount = mount_for(conn, root["volume_uid"])
         if not mount:

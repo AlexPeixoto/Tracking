@@ -128,3 +128,21 @@ def test_snapshot_keeps_folders_the_scan_skipped(tmp_path, conn):
     assert {"Anime/Extras", "Tools/rpcs3", "Tools/rpcs3/dev_hdd0/game/BLUS30161"} <= rels
     assert "$RECYCLE.BIN" not in rels and ".hidden" not in rels
     assert fs.info(conn, rid)[1] == 4                           # every file but the system ones
+
+
+def test_replay_lists_what_the_rules_find_and_diffs(tmp_path, conn):
+    from tracking.scan import replay
+
+    lib = _library(tmp_path)
+    rid = scan.add_root(conn, str(lib))
+    scan.scan_root(conn, rid)
+    conn.commit()
+    base = tmp_path / "base.tsv"
+    db_file = tmp_path / "data" / "library.sqlite3"
+    assert replay.main(["--db", str(db_file), "--baseline", str(base), "--save"]) == 0
+    saved = base.read_text(encoding="utf-8").splitlines()
+    assert any("\tOkami\t" in line for line in saved) and len(saved) == len(db.list_items(conn))
+    assert replay.main(["--db", str(db_file), "--baseline", str(base)]) == 0       # unchanged
+    base.write_text("\n".join(saved[1:]) + "\nx\tgame\tPS2\t\t\t1\tGone\tx/y\n", encoding="utf-8")
+    assert replay.main(["--db", str(db_file), "--baseline", str(base)]) == 1       # a change
+    assert replay.diff(["a", "b"], ["b", "c"]) == (["a"], ["c"])

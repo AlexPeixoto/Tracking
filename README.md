@@ -313,5 +313,7 @@ the [wishlist](docs/WISHLIST.md).
 
 ## For developers
 
-- Code layout, and how to add a service, section or platform: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Tests: `.venv\Scripts\pip install pytest`, then `.venv\Scripts\python -m pytest`
+- Start at [docs/README.md](docs/README.md): code layout, the scanning and lookup rules (each
+  with its real example), the data, and how to change things safely.
+- Checks: `check.bat` (lint, tests with coverage, and a replay of your own library against a
+  saved baseline: `.venv\Scripts\python -m tracking.scan.replay --save` records one).
