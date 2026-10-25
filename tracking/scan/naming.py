@@ -4,6 +4,7 @@ Release folders and their files disagree all the time, and each side is right so
 
     Season 2/                             -> the files ("Mahouka ... S01E01.mkv")
     1a. MSG 0079/  (in a collection pack) -> the files ("Mobile Suit GUNDAM 0079 - 01.mkv")
+    Boku Dake ga Inai Machi (Erased)/     -> the files ("Erased - 01.mkv"): the bracketed name
     05 - Nekomonogatari (White)/          -> the folder: every sibling's files say
                                              "Monogatari Series Second Season"
     Hare + Guu/DELUXE/                    -> both: "Hare + Guu DELUXE"
@@ -18,6 +19,7 @@ of those its own item path. Every case above has a test (tests/test_scanner.py).
 from __future__ import annotations
 
 import os
+import re
 
 from .. import titles
 from . import fs
@@ -28,8 +30,9 @@ from .videos import _Group, is_extra_file
 def show_title(name: str, dir_abs: str, dir_rel: str, folder: titles.VideoInfo, g: _Group | None) -> str:
     """The title of a folder holding one show / season / movie (``g``: its video group)."""
     # 1. A folder named "Season 2" (or just a number, "OVA") says nothing about the show.
-    weak = titles.season_from_dir(name) is not None or titles.is_weak_title(folder.title)
-    use_files = g is not None and _files_name_it(name, dir_abs, folder, g, weak)
+    weak = titles.is_season_only(name) or titles.is_weak_title(folder.title)
+    use_files = g is not None and (_files_name_it(name, dir_abs, folder, g, weak)
+                                   or named_in_brackets(name, g.title))
     base = g.title if use_files else folder.title
     # 2. "Hare + Guu/DELUXE": a part of the show the parent folder names.
     if g and not use_files and not weak and part_of_parent(g.title, folder.title, dir_rel):
@@ -92,6 +95,18 @@ def part_of_parent(files_title: str, folder_title: str, dir_rel: str) -> bool:
     parent = titles.parse_video(titles.strip_order_prefix(parts[-2]), keep_plus=True).title
     show = titles.normalize(files_title)
     return bool(show) and show == titles.normalize(parent) and show not in titles.normalize(folder_title)
+
+
+def named_in_brackets(folder_name: str, files_title: str) -> bool:
+    """ "Boku Dake ga Inai Machi (Erased)" holding "Erased - 01.mkv": the folder gives the
+    show in two languages and the files use the bracketed one, so that's the name ("Erased",
+    not the romaji). Also when it ends the bracketed name ("(Mobile Suit Gundam GQuuuuuuX)"
+    with "Gundam GQuuuuuuX - 01.mkv")."""
+    show = titles.normalize(files_title)
+    if len(show) < 4:
+        return False
+    return any(titles.normalize(alias).endswith(show)
+               for alias in re.findall(r"\(([^()]*[A-Za-z]{3}[^()]*)\)", folder_name))
 
 
 def abbreviated(title: str) -> bool:

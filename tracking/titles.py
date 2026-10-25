@@ -209,6 +209,16 @@ def season_from_dir(name: str) -> int | None:
     return int(next(g for g in m.groups() if g))
 
 
+def is_season_only(name: str) -> bool:
+    """ "Season 2", "S02", "2nd Season [1080p]": a folder that names a season and nothing else,
+    so the show's name has to come from elsewhere. Not "Muv-Luv Alternative - Total Eclipse
+    (Season 1)", which names the show as well."""
+    if season_from_dir(name) is None:
+        return False
+    rest = _SEASON_DIR.sub(" ", name.strip())
+    return is_weak_title(_tidy(_PARENS.sub(" ", _BRACKETS.sub(" ", rest))))
+
+
 def _as_int(v) -> int | None:
     if isinstance(v, list):
         v = v[0] if v else None
@@ -256,8 +266,11 @@ def parse_video(name: str, keep_plus: bool = False) -> VideoInfo:
                 plus = _plus_title(name, title)
                 if plus != title:
                     title, alt = plus, None  # "Hare + Guu": "Guu" isn't a subtitle
-            # "Vampire Hunter D - Bloodlust": guessit splits the subtitle off movies.
-            if not is_series and isinstance(alt, str) and re.search(r"[A-Za-z]{3}", alt) and len(alt) < 50:
+            # "Vampire Hunter D - Bloodlust": guessit splits the subtitle off movies. A series
+            # *folder* has no episode number, and its subtitle is the show's name too:
+            # "Muv-Luv Alternative - Total Eclipse (Season 1)" isn't "Muv-Luv Alternative".
+            subtitle = isinstance(alt, str) and re.search(r"[A-Za-z]{3}", alt) and len(alt) < 50
+            if (not is_series or episode is None) and subtitle:
                 title = f"{title}: {alt}"
             for abbr in _DOTTED.findall(name):  # guessit turns "A.D.P" / "B.C." into "A D P" / "B C"
                 spaced = " ".join(re.findall(r"[A-Za-z]", abbr))

@@ -457,3 +457,20 @@ def test_collection_folders_keep_their_own_names(tmp_path):
     assert {"Nekomonogatari", "Kabukimonogatari"} <= found
     assert "Monogatari Series Second Season" not in found
     assert "The King of Fighters Destiny" in found
+
+
+def test_a_season_in_the_folder_name_doesnt_hide_the_show(tmp_path):
+    # "(Season 1)" in a full folder name: the folder still names the show, subtitle included.
+    muv = "anime/Muv-Luv Alternative - Total Eclipse (Season 1) [BD 1080p][HEVC x265 10bit][Dual-Audio]"
+    for n in range(1, 4):
+        touch(tmp_path, f"{muv}/[Judas] Muv-Luv - S01E0{n}.mkv")
+    # Two languages in the folder name, the files use the bracketed one: that's the name.
+    erased = "anime/Boku Dake ga Inai Machi (Erased) (Season 1) [BD 1080p]"
+    for n in range(1, 4):
+        touch(tmp_path, f"{erased}/[Judas] Erased - S01E0{n}.mkv")
+    found = {i.title for i in scan.collect(str(tmp_path), "", Hints())}
+    assert "Muv-Luv Alternative: Total Eclipse" in found and "Muv-Luv" not in found
+    assert "Erased" in found
+    # A folder that only names a season still takes the files' show name.
+    assert titles.is_season_only("Season 2") and titles.is_season_only("2nd Season [1080p]")
+    assert not titles.is_season_only("Mushishi Season 2")

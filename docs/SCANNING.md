@@ -77,7 +77,11 @@ For each folder, in order:
 - **Several shows in one folder** each get their own item path (`naming.unique_slugs`):
   "Sekirei" S1 and "Sekirei Pure Engagement" S1 used to overwrite each other.
 - **The item's name** (`naming.show_title`), in steps:
-  1. a folder named "Season 2" / "OVA" / a number says nothing: use the files' show name;
+  1. a folder that *only* names a season ("Season 2", "S02") or a type ("OVA") says nothing:
+     use the files' show name. A full name that mentions a season still counts, subtitle
+     included: "Muv-Luv Alternative - Total Eclipse (Season 1)" is that show, not the files'
+     "Muv-Luv". When the folder gives two names and the files use the bracketed one,
+     "Boku Dake ga Inai Machi (Erased)", the files' name ("Erased") wins;
   2. in a numbered pack ("1a. MSG 0079"), a longer name from the files wins, unless every
      sibling folder's files share it ("05 - Nekomonogatari (White)" keeps its name) or the
      folder name is abbreviated ("KoF - Destiny" takes "The King of Fighters Destiny");
