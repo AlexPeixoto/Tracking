@@ -371,8 +371,9 @@ def walk(dir_abs: str, dir_rel: str, hints: Hints, depth: int = 0,
             return
         if not e.is_dir(follow_symlinks=False) or classify.is_skipped(e.name):
             continue
-        if classify.is_tool_name(e.name) or classify.is_redist_dir(e.name):
-            log.debug("skip %s: emulator / tool / redistributables", vol_rel(dir_rel, e.name))
+        name = e.name
+        if classify.is_tool_name(name) or classify.is_redist_dir(name) or classify.is_not_media_dir(name):
+            log.debug("skip %s: emulator / tool / redistributables / logs, caches", vol_rel(dir_rel, name))
             continue
         if hints.category != "game" and is_extra_dir(e.name):
             log.debug("skip %s: extras", vol_rel(dir_rel, e.name))

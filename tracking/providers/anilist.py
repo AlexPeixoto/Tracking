@@ -55,12 +55,18 @@ def _fetcher(title: str):
 def _search(title: str, year: int | None, kind: str | None = None) -> Metadata | None:
     """``kind`` ("series" / "movie") steers the match towards TV or movie entries."""
     media = _media(title, _fetcher(title))
-    best = best_match(
-        title, year, media,
-        names=lambda m: [*(m.get("title") or {}).values(), *(m.get("synonyms") or [])],
-        cand_year=lambda m: m.get("seasonYear"),
-        bonus=lambda m: media_format_bonus(m.get("format"), kind),
-    )
+
+    def pick(k):
+        return best_match(
+            title, year, media,
+            names=lambda m: [*(m.get("title") or {}).values(), *(m.get("synonyms") or [])],
+            cand_year=lambda m: m.get("seasonYear"),
+            bonus=lambda m: media_format_bonus(m.get("format"), k),
+        )
+
+    # The series / movie hint is a preference, not a filter: "Kizumonogatari" stored as
+    # episodes 01-03 is three movies.
+    best = pick(kind) or (pick(None) if kind else None)
     if not best:
         return None
     url = best.get("siteUrl")

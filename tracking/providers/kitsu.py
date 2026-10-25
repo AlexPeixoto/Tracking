@@ -38,14 +38,17 @@ def _get(url: str, params: dict) -> dict:
 def _search(title: str, year: int | None, kind: str | None = None) -> Metadata | None:
     data = cached_json("kitsu", title.lower(), 14,
                        lambda: _get(API_URL, {"filter[text]": title, "page[limit]": 10}))
-    best = best_match(
-        title, year, data.get("data") or [],
-        names=lambda a: [a["attributes"].get("canonicalTitle"),
-                         *(a["attributes"].get("titles") or {}).values(),
-                         *(a["attributes"].get("abbreviatedTitles") or [])],
-        cand_year=lambda a: year_of(a["attributes"].get("startDate")),
-        bonus=lambda a: media_format_bonus(a["attributes"].get("subtype"), kind),
-    )
+    def pick(k):
+        return best_match(
+            title, year, data.get("data") or [],
+            names=lambda a: [a["attributes"].get("canonicalTitle"),
+                             *(a["attributes"].get("titles") or {}).values(),
+                             *(a["attributes"].get("abbreviatedTitles") or [])],
+            cand_year=lambda a: year_of(a["attributes"].get("startDate")),
+            bonus=lambda a: media_format_bonus(a["attributes"].get("subtype"), k),
+        )
+
+    best = pick(kind) or (pick(None) if kind else None)  # a preference, not a filter
     if not best:
         return None
     attr = best["attributes"]

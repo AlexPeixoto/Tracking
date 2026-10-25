@@ -46,8 +46,14 @@ def is_short_extra(name: str, secs: float | None) -> bool:
     return bool(secs) and secs <= SHORT_EXTRA_SECS and bool(_SHORT_EXTRA.search(stem))
 
 
+# "Fatal Fury (TMP) - Extras - Big Bear vs Cheng.mkv": filed as an extra in its own name.
+_EXTRA_IN_NAME = re.compile(r"(?i)\s-\s(?:extras?|bonus|special features)\s-\s")
+
+
 def is_extra_file(name: str) -> bool:
     stem = titles.strip_ext(name.rsplit("/", 1)[-1])
+    if _EXTRA_IN_NAME.search(stem):
+        return True
     return bool(_EXTRA_FILE.search(re.sub(r"\s*[\[(][^\])]*[\])]\s*", " ", stem).strip()))
 
 
@@ -57,8 +63,10 @@ def is_extra_path(inner_rel: str) -> bool:
 
 
 def is_extra_dir(name: str) -> bool:
-    n = name.lower()
-    return n in EXTRA_DIRS or n.startswith(("nc ", "extras", "bonus"))
+    """ "Extras", "NC", "Bonus"..., also numbered or named in a collection: "2b. FF Extras"."""
+    n = titles.strip_order_prefix(name).lower()
+    return (n in EXTRA_DIRS or n.startswith(("nc ", "extras", "bonus"))
+            or n.endswith((" extras", " extra", " bonus")))
 
 
 @dataclass
@@ -126,8 +134,24 @@ def group_videos(videos: list[tuple[FileEntry, str]]) -> list[_Group]:
         if host:
             host.files += g.files
             groups.remove(g)
+    # A stray file or two whose name only adds a subtitle to the show next to it
+    # ("86 - Eighty-Six - S01E11.5.mkv" among "86 - S01E01.mkv"...) is that show's.
+    for g in [g for g in groups if g.kind == "series" and len(g.files) <= STRAY_FILES]:
+        host = next((h for h in groups if h is not g and h.kind == "series" and h.season == g.season
+                     and len(h.files) > len(g.files) and _adds_subtitle(g.title, h.title)), None)
+        if host:
+            host.files += g.files
+            groups.remove(g)
     groups.sort(key=lambda g: (g.kind != "series", g.season or 0, g.title))
     return groups
+
+
+STRAY_FILES = 2  # at most this many files for a group to count as strays of the show next to it
+
+
+def _adds_subtitle(title: str, show: str) -> bool:
+    """ "86: Eighty-Six" is "86" plus a subtitle."""
+    return bool(show) and title.lower().startswith(show.lower() + ":")
 
 
 def season_tag(season: int | None) -> str:
@@ -135,6 +159,9 @@ def season_tag(season: int | None) -> str:
 
 
 def display_title(base: str, kind: str | None, season: int | None) -> str:
-    if kind == "series" and season and season > 1 and titles.season_from_dir(base) is None:
+    """ "Laid-Back Camp" season 2 -> "Laid-Back Camp Season 2". Not when the name already
+    says it: "Tenchi Muyo! Ryo-Ohki 2" isn't "Tenchi Muyo! Ryo-Ohki 2 Season 2"."""
+    if (kind == "series" and season and season > 1 and titles.season_from_dir(base) is None
+            and not base.rstrip().endswith(f" {season}")):
         return f"{base} Season {season}"
     return base

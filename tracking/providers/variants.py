@@ -38,6 +38,7 @@ ABBREVIATIONS = {
     "KH": "Kingdom Hearts", "SMT": "Shin Megami Tensei", "DQ": "Dragon Quest",
     "MGS": "Metal Gear Solid", "TLoH": "The Legend of Heroes", "DE": "Definitive Edition",
     "GOTY": "Game of the Year Edition", "CE": "Complete Edition", "DX": "Deluxe",
+    "MS": "Mobile Suit", "FF": "Final Fantasy",
 }
 _NOT_SEQUEL = re.compile(r"(?i)(?:season|part|vol\.?|volume|episode|ep\.?|chapter|s)\s*$")
 
@@ -92,6 +93,26 @@ def without_leading_abbreviation(t: str) -> list[str]:
     return [lead.group(1)] if lead else []
 
 
+def without_release_type(t: str) -> list[str]:
+    """ "Fatal Fury Series" -> "Fatal Fury", "Queen's Blade OVA" -> "Queen's Blade": a release
+    type at the end that services don't have in the name. Not "Batman - The Animated
+    Series" (that's the name), and not "the animation" ("CITY THE ANIMATION")."""
+    if re.search(r"(?i)\bthe\s+(?:\w+\s+){0,2}series$", t):
+        return []  # "Batman - The Animated Series" is the name
+    plain = re.sub(r"(?i)\s+(?:series|tv series|ovas?|oavs?|onas?)$", "", t)
+    return [plain] if plain != t and len(plain) >= 3 else []
+
+
+def numbered_abbreviations(t: str) -> list[str]:
+    """ "FF6" -> "Final Fantasy 6", "DQ11" -> "Dragon Quest 11": an abbreviation glued to its
+    number (ABBREVIATIONS); the numeral rules then add "Final Fantasy VI"."""
+    def full(m: re.Match) -> str:
+        return f"{ABBREVIATIONS[m.group(1)]} {m.group(2)}"
+    keys = "|".join(re.escape(k) for k in ABBREVIATIONS if k.isalpha())
+    expanded = re.sub(rf"\b({keys})(\d{{1,2}})\b", full, t)
+    return [expanded] if expanded != t else []
+
+
 def expanded_abbreviations(t: str) -> list[str]:
     """ "MSG SEED ..." -> "Mobile Suit Gundam SEED ...", "25th AR" -> "25th Anniversary
     Remaster", "DX" -> "Deluxe": repack shorthand (ABBREVIATIONS), whole words only."""
@@ -110,6 +131,8 @@ RULES: list[Callable[[str], list[str]]] = [
     without_trailing_abbreviation,
     without_leading_abbreviation,
     expanded_abbreviations,
+    numbered_abbreviations,
+    without_release_type,
 ]
 
 

@@ -32,7 +32,9 @@ first, at most `MAX_VARIANTS` (each costs a request per service). `RULES`, in or
 | `without_edition` | "White Knight Chronicles - International Edition" → "White Knight Chronicles" |
 | `without_trailing_abbreviation` | "RoboCop - Rogue City UB" → "RoboCop - Rogue City" |
 | `without_leading_abbreviation` | "MDA - RAIN CODE Plus" → "RAIN CODE Plus" |
-| `expanded_abbreviations` | "MSG SEED" → "Mobile Suit Gundam SEED", "DX" → "Deluxe" (`ABBREVIATIONS`) |
+| `expanded_abbreviations` | "MSG SEED" → "Mobile Suit Gundam SEED", "MS ZETA Gundam" → "Mobile Suit ZETA Gundam", "DX" → "Deluxe" (`ABBREVIATIONS`) |
+| `numbered_abbreviations` | "FF6" → "Final Fantasy 6" (then "Final Fantasy VI") |
+| `without_release_type` | "Fatal Fury Series" → "Fatal Fury", "Queen's Blade OVA" → "Queen's Blade"; not "Batman - The Animated Series" |
 
 Then over all of those: `digits_to_roman` ("Fatal Frame 2" → "Fatal Frame II", not "Season 2",
 not "10th", 10 stays 10) and `roman_to_digits`.
@@ -52,6 +54,9 @@ and after; only the intended titles should change).
     is close enough (a PS5 "Wolverine" is "Marvel's Wolverine", not the 1991 NES game);
   - **year**: +6 same year, +2 one off, −4 otherwise (games pass the item's year; a year
     typed after a Completed entry's name counts: "Wolverine 2026").
+- **series / movie**: anime services prefer the item's kind (`media_format_bonus`), but when
+  that leaves no match they accept the other ("Kizumonogatari" stored as episodes 01–03 is
+  three movies).
 - Find match (`ui/dialogs/match.py`) lets you search by hand and pin the item to a result.
 
 ## Covers
@@ -73,6 +78,11 @@ In order:
 A refetch that finds nothing keeps the old cover: a service being down shouldn't blank items.
 
 ## Known gaps (ideas, not done)
+
+- A folder of several separate releases under one name ("2a. Fatal Fury Series" holding three
+  TV specials, each its own entry on AniList) can't match one entry; Find match by hand.
+- Games in a mixed folder with no platform in the name ("tpex/Alter Echo (USA).zip") need a
+  platform set by hand (or a disc header the scanner can read).
 
 - Neo Geo / arcade sets named by MAME short names ("kof2003.zip") need a short-name → title
   list (e.g. FinalBurn Neo's DAT) before any service can find them.

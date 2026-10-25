@@ -117,6 +117,9 @@ def clean_game_title(name: str) -> str:
     s = _PARENS.sub(" ", s)
     s = _tidy(s)
     s = re.sub(r"[-+]\s*$", "", _SPACES.sub(" ", s)).strip(" -.,+")
+    # "V.I.P. (USA).chd": the dots of an acronym aren't separators ("V I P").
+    for abbr in _DOTTED.findall(name):
+        s = s.replace(" ".join(re.findall(r"[A-Za-z]", abbr)), abbr.rstrip("."), 1)
     return front_article(smart_title(s)) if s else name
 
 
@@ -225,6 +228,73 @@ def _as_int(v) -> int | None:
     return v if isinstance(v, int) else None
 
 
+# Release-name spellings guessit misreads, rewritten before it sees them:
+_FIX_VERSION = re.compile(r"(?i)\b(S\d{1,2}E\d{1,4})v\d+\b")            # "S01E01v2": a re-release, still E01
+# "S01OVA01", "S01OVA": a special
+_FIX_OVA = re.compile(r"(?i)\bS(\d{1,2})\s?OVA\s?(\d{1,3})?(?![A-Za-z0-9])")
+_FIX_HALF = re.compile(r"^(\d{1,3})\.5(?=\s)")                          # "06.5 Kara no Kyoukai Remix"
+
+
+def _fix_release_name(name: str) -> str:
+    """ "[Judas] Gundam GQuuuuuuX - S01E01v2.mkv" -> "... S01E01" (guessit calls it a movie);
+    "S01OVA01-After Washing Your Body.mkv" / "Sora no Otoshimono - S01OVA.mkv" -> season 0
+    (a special, which joins the show's first season); "06.5 Title" -> "06 Title"."""
+    name = _FIX_VERSION.sub(r"\1", name)
+    name = _FIX_OVA.sub(lambda m: f"S00E{int(m.group(2) or 1):02d}", name)
+    return _FIX_HALF.sub(r"\1", name)
+
+
+# Words guessit is right to drop after a title (release details, not part of the name).
+_RELEASE_WORDS = {
+    "complete", "series", "season", "seasons", "batch", "bd", "bdrip", "bluray", "web", "webrip",
+    "webdl", "dvd", "dvdrip", "dual", "audio", "multi", "subs", "sub", "subbed", "dub", "dubbed",
+    "eng", "english", "jap", "raw", "uncensored", "hevc", "remux", "tv", "ova", "oav", "ona", "movie",
+    "movies", "special", "specials", "extras", "vostfr", "french", "german", "spanish", "italian",
+    "remastered", "proper", "repack", "internal", "limited", "collection", "pack", "hdr", "uhd"}
+_TRAILING_TAGS = re.compile(
+    r"(?i)(?:\s+(?:s\d{1,2}|ovas?|oads?|specials?|movies?|season\s*\d+|complete|batch))+$")
+_CUT = re.compile(r"\s+-\s+|\s*[\[({]|\s+S\d{1,2}\s?E\d|\s+(?:ep?\.?\s?)?\d{1,4}(?:v\d)?\s*$", re.I)
+
+
+def _uncut(name: str, title: str) -> str:
+    """guessit sometimes drops the end of a name: "No Game No Life [BD]" -> "No Game No",
+    "[Judas] To Love-Ru - S01E01" -> "To Love" ("Ru" read as Russian). When the name as
+    written, up to its first separator, is guessit's title plus a word or two that aren't
+    release details, those words are the name's."""
+    stem = re.sub(r"^\s*(?:\[[^\]]*\]\s*)+", "", strip_ext(name)).replace("_", " ")
+    if " " not in stem.strip():
+        stem = stem.replace(".", " ")
+    simple = _CUT.split(stem, maxsplit=1)[0].strip()
+    # Release tags at the end go first: "To Love-Ru S1 OVAs" -> "To Love-Ru".
+    simple = _TRAILING_TAGS.sub("", simple)
+    if not simple.lower().startswith(title.lower()) or len(simple) == len(title):
+        return title
+    rest = simple[len(title):]
+    if not re.fullmatch(r"(?:-[A-Za-z][\w'!?]*|\s+[A-Za-z][\w'!?]*){1,2}", rest):
+        return title
+    if any(w.lower() in _RELEASE_WORDS for w in re.findall(r"[A-Za-z]+", rest)) \
+            or re.search(r"(?i)\b(?:v\d|s\d{1,2}\b|e\d)", rest):  # "1st GIG v2", "Mushishi S1": not words
+        return title
+    return title + rest
+
+
+# Subtitles that describe the release, not the show: "Kara No Kyoukai - Full Series".
+_RELEASE_SUBTITLE = re.compile(
+    r"(?i)^(?:(?:full|complete)\s+(?:series|collection|seasons?|box)|complete|batch|uncensored|"
+    r"remastered|dual[\s-]audio|multi[\s-]?subs?|season\s*\d+|s\d+|part\s*\d+|vol(?:ume)?\.?\s*\d+)$")
+_EPISODE_MARK = re.compile(r"(?i)\bs\d{1,2}\s?e\d|\be\d{1,4}\b|\bep\.?\s?\d|\bepisode\s?\d|\s-\s\d{1,4}\b")
+
+
+def _subtitle_before_episode(name: str, alt: str) -> bool:
+    """ "Bleach - Thousand Year Blood War - S01E48 - The End.mkv", "Brotherhood - Final
+    Fantasy XV, E01-E05": the subtitle comes before the episode number, so it's part of the
+    show's name (after it, it would be the episode's title)."""
+    text = re.sub(r"[._]", " ", strip_ext(name))
+    at = text.lower().find(alt.lower())
+    mark = _EPISODE_MARK.search(text)
+    return at >= 0 and mark is not None and at < mark.start()
+
+
 @lru_cache(maxsize=8192)
 def parse_video(name: str, keep_plus: bool = False) -> VideoInfo:
     """Title / year / season / episode from a release name (file or folder).
@@ -233,6 +303,7 @@ def parse_video(name: str, keep_plus: bool = False) -> VideoInfo:
     movie "Vampire Hunter D: Bloodlust" (2000);
     "[SubsMix] Ghost in the Shell SAC 1st GIG - S01E05 - Decoy.mkv" -> series S1 E5.
     """
+    name = _fix_release_name(name)
     # "01.mkv", "E05 [ABCD1234].mkv": a file named only by its number is an
     # episode of whatever show its folder is (guessit would call it a movie "01").
     bare = _BRACKETS.sub("", strip_ext(name)).strip()
@@ -252,6 +323,7 @@ def parse_video(name: str, keep_plus: bool = False) -> VideoInfo:
         g = guessit(_YEAR_RANGE.sub(r"(\1)", strip_site(name)))
         title = str(g.get("title") or "").strip()
         if title:
+            title = _uncut(name, title)
             episode = _as_int(g.get("episode")) or _as_int(g.get("absolute_episode"))
             season = _as_int(g.get("season"))
             # Not guessit's "type": it calls any fansub release (CRC tag) an episode,
@@ -269,8 +341,9 @@ def parse_video(name: str, keep_plus: bool = False) -> VideoInfo:
             # "Vampire Hunter D - Bloodlust": guessit splits the subtitle off movies. A series
             # *folder* has no episode number, and its subtitle is the show's name too:
             # "Muv-Luv Alternative - Total Eclipse (Season 1)" isn't "Muv-Luv Alternative".
-            subtitle = isinstance(alt, str) and re.search(r"[A-Za-z]{3}", alt) and len(alt) < 50
-            if (not is_series or episode is None) and subtitle:
+            subtitle = (isinstance(alt, str) and re.search(r"[A-Za-z]{3}", alt) and len(alt) < 50
+                        and not _RELEASE_SUBTITLE.match(alt.strip()) and not is_weak_title(alt))
+            if subtitle and (not is_series or episode is None or _subtitle_before_episode(name, alt)):
                 title = f"{title}: {alt}"
             for abbr in _DOTTED.findall(name):  # guessit turns "A.D.P" / "B.C." into "A D P" / "B C"
                 spaced = " ".join(re.findall(r"[A-Za-z]", abbr))
@@ -331,6 +404,8 @@ def _number_in_title(name: str, title: str) -> tuple[str, str] | None:
         return None
     num, rest = m.group(1), m.group(2)
     if (re.match(r"\s*[(\[](?:19|20)\d\d[)\]]", rest)
+            # "Megazone 23 Movie 1-4", "Megazone_23_Movie1_Part1": the number names the show
+            or re.match(r"(?i)\s*(?:movie|part|ova|oav|special)\s*\d", rest)
             or re.match(r"\s*-\s*(?:ep?\s*)?\d{1,4}\b", rest, re.I)
             or (not rest.strip(" -") and len(num) >= 3 and strip_ext(name) == name)):
         return f"{title} {num}", rest

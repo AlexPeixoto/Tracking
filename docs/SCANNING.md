@@ -36,7 +36,8 @@ For each folder, in order:
 1. **Skipped entirely**: system folders (`$RECYCLE.BIN`, `Windows`…), hidden folders,
    extras folders next to shows (`Extras`, `NC`, `Bonus`…), emulator / tool / benchmark
    folders (`rpcs3`, `Cemu_2.6`, `Cinebench2024…`: `classify.is_tool_name`) and
-   redistributables (`_Redist`, `CommonRedist`).
+   redistributables (`_Redist`, `CommonRedist`), and folders emulators keep next to games
+   (`log`, `Drivers`, `cache`, save states, cheats, screenshots: `classify.is_not_media_dir`).
 2. **A container** (walk into it) when it is:
    - a keyword folder: a section (`Anime`, `Games`) or a platform (`PS2`, `SFC`); the platform
      becomes a hint for everything below;
@@ -57,7 +58,8 @@ For each folder, in order:
   `SFC` SNES, `FC` NES, `SMS`, `MD`, `GG`, `PCE`, `DC`, `GC`…), in-name tokens (`(PS2)`),
   ROM extensions (`classify.ROM_EXT`), disc headers (`discid.py`), store serials.
 - **Title**: `titles.clean_game_title` drops release tags, regions, scene groups, serials and
-  moves a trailing article to the front ("Legend of Zelda, The" → "The Legend of Zelda").
+  moves a trailing article to the front ("Legend of Zelda, The" → "The Legend of Zelda");
+  dotted acronyms keep their dots ("V.I.P. (USA)" → "V.I.P").
 - **Numbered collections**: when a folder's files share an index style ("000 Sonic Blast",
   "0121 - Castlevania…"), at least `titles.INDEX_MIN_FILES` of them and one in
   `INDEX_ONE_IN`, the number is dropped. A lone "1942" or "007 - NightFire" keeps it.
@@ -67,8 +69,25 @@ For each folder, in order:
 
 ## Videos (anime, movies, TV)
 
+- **Reading release names** (`titles.parse_video`, guessit plus fixes for what it misreads):
+  - "S01E01**v2**" is still episode 1 (guessit calls it a movie);
+  - "S01OVA01-…" / "- S01OVA" are specials (season 0);
+  - "06.5 Title" is episode 6, not a show called "5 Title";
+  - the end of a name guessit drops comes back: "To Love-Ru" ("Ru" read as Russian),
+    "No Game No Life" (`titles._uncut`), but not release tags ("S1", "v2", "BD");
+  - a subtitle *before* the episode number is the show's ("Bleach - Thousand Year Blood War
+    - S01E48"), after it it's the episode's; a series folder keeps its subtitle
+    ("Muv-Luv Alternative - Total Eclipse (Season 1)") unless it describes the release
+    ("Kara No Kyoukai - Full Series");
+  - a number that names the show stays in it: "Megazone 23 Movie 1-4", "Mob Psycho 100".
 - **Episodes or movie** (`videos.group_videos`): files with episode numbers are a series,
-  one item per season; files without are movies. Specials (season 0) join season 1.
+  one item per season; files without are movies. Specials (season 0) join season 1, and a
+  stray file or two whose name only adds a subtitle join the show next to them ("86 -
+  Eighty-Six - S01E11.5" among "86 - S01E01"…, `STRAY_FILES`).
+- **Season in the name**: "Laid-Back Camp" season 2 shows as "Laid-Back Camp Season 2", but
+  "Tenchi Muyo! Ryo-Ohki 2" isn't "… 2 Season 2".
+- **Extras folders** count in collections too ("2b. FF Extras", "4c. Extras"), and files
+  that call themselves extras ("Fatal Fury (TMP) - Extras - Big Bear vs Cheng").
 - **Not episodes**: openings / endings / promos by name (`NCOP`, `NCED 01`, `Opening 01`,
   `Clean Ending`, `MV`, `CM`, `TV-SPOT`, `Preview`, `credits`, `splash screen`:
   `videos.is_extra_file`), and once lengths are measured, any video of

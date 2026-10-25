@@ -34,6 +34,7 @@ SYSTEMS = {
     "Atari Lynx": "Atari - Lynx", "Atari Jaguar": "Atari - Jaguar", "ColecoVision": "Coleco - ColecoVision",
     "Intellivision": "Mattel - Intellivision", "Vectrex": "GCE - Vectrex",
     "Commodore 64": "Commodore - 64", "Amiga": "Commodore - Amiga", "MSX": "Microsoft - MSX",
+    "DOS": "DOS",
 }
 # Collections mix these up (a "GB" folder full of Game Boy Color games): look in the
 # sibling's art too when the system's own has nothing.

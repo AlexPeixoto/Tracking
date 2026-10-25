@@ -98,6 +98,7 @@ PLATFORMS: list[Platform] = [
     _P("Amiga", ("amiga",)),
     _P("ZX Spectrum", ("zxspectrum",)),
     _P("MSX", ("msx",)),
+    _P("DOS", ("dos", "msdos", "exodos", "dosbox"), (), "PC", "DOS", "PC"),
     _P("3DO", ("3do",)),
 ]
 
