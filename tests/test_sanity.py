@@ -129,3 +129,34 @@ def test_windows_boot_and_recovery_partitions_arent_offered():
     assert not volumes.is_system_partition(recovery, 500 * 1024**3)       # a big letterless disk
     assert not volumes.is_system_partition(volumes.Volume("guid:y", None, "SNES", guid), 10**8)
     assert not volumes.is_system_partition(volumes.Volume("guid:z", None, "", "E:\\"), 10**8)
+
+
+def test_search_wording_is_less_picky():
+    assert "Gal Gun 2" in search_variants("GalGun 2")
+    assert search_variants("DmC Devil May Cry") == ["DmC Devil May Cry"]
+    assert "White Knight Chronicles" in search_variants("White Knight Chronicles - International Edition")
+    assert "Death Stranding" in search_variants("Death Stranding Directors Cut")
+    assert "Atelier Ryza - Secret Trilogy Deluxe" in search_variants("Atelier Ryza - Secret Trilogy DX")
+    assert search_variants("Edition") == ["Edition"]
+
+
+def test_libretro_looks_in_the_sibling_set(monkeypatch):
+    from tracking.providers import Query, libretro
+
+    sets = {"Nintendo - Game Boy": ["Tetris (World)"],
+            "Nintendo - Game Boy Color": ["Rayman 2 - The Great Escape (USA)"]}
+    monkeypatch.setattr(libretro, "names", lambda system: sets.get(system, []))
+    md = libretro.lookup(Query("Rayman 2 - The Great Escape", category="game", platform="Game Boy"))
+    assert md and "Game%20Boy%20Color" in md.poster_url
+    assert libretro.lookup(Query("Tetris", category="game", platform="Game Boy")).title == "Tetris"
+
+
+def test_same_title_elsewhere_lends_its_cover(conn):
+    steam = _show(conn, "Gal*Gun 2", "app/851890", None, "steam.jpg", kind=None)
+    switch = _show(conn, "GalGun 2", "tpex/sw/GalGun 2.xci", None, None, kind=None)
+    conn.execute("UPDATE items SET category='game' WHERE id IN (?, ?)", (steam, switch))
+    other = _show(conn, "Gal", "x/Gal", None, None, kind=None)        # too short to trust
+    assert enrich.borrow_cover(conn, switch)
+    poster = conn.execute("SELECT poster FROM items WHERE id=?", (switch,)).fetchone()[0]
+    assert (paths.posters_dir() / poster).read_bytes() == b"cover of Gal*Gun 2"
+    assert not enrich.borrow_cover(conn, other)

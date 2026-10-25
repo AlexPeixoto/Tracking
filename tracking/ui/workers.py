@@ -187,10 +187,10 @@ class EnrichJob(Job):
                 or r["id"] in no_episodes or r["id"] in no_cover]
         workers = metadata_workers(conn)
         done = self._fetch_parallel(todo, mounts, owner, workers)
-        # Later seasons fetched before their first season had its cover: try again now.
-        for r in conn.execute("SELECT id FROM items WHERE poster IS NULL AND COALESCE(season, 1) > 1"
-                              ).fetchall():
-            if enrich.borrow_season_cover(conn, r["id"]):
+        # Still no cover: a first season's, or the same title's elsewhere in the library
+        # (fetched meanwhile), will do.
+        for r in conn.execute("SELECT id FROM items WHERE poster IS NULL AND missing=0").fetchall():
+            if enrich.borrow_cover(conn, r["id"]):
                 owner.signals.item_changed.emit(r["id"])
         conn.commit()
         return f"metadata updated for {done} items"

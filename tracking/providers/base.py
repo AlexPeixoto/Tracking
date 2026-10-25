@@ -291,6 +291,13 @@ _FIRST_PART = re.compile(r"(?i)\s*(?:\b1st\s+\w+|\bfirst\s+season|\bseason\s*0*1
 _ABBR = r"(?![IVX]+\b)[A-Z][A-Za-z]{0,3}[A-Z]"  # "UB", "EE", "LDA", "TLoH", "LoTC"
 
 
+# "... - International Edition", "... Director's Cut": the edition, not the game.
+_EDITION = re.compile(
+    r"(?i)(?:\s*[-:]\s*|\s+)(?:international|deluxe|complete|definitive|ultimate|gold|special|limited|"
+    r"collector'?s|enhanced|remastered|anniversary|director'?s|directors|extended|standard|premium|"
+    r"legendary|royal|digital|game of the year|goty)\s+(?:edition|cut|version)$")
+
+
 def search_variants(title: str) -> list[str]:
     """Other ways to search for a title when the exact one finds nothing.
 
@@ -314,9 +321,18 @@ def search_variants(title: str) -> list[str]:
         add(unnumbered)
         if " - " in unnumbered:
             add(unnumbered.replace(" - ", ": "))
+    # "GalGun 2" is "Gal*Gun 2" to the services: words glued together in a file name.
+    unglued = re.sub(r"(?<=[a-z])(?=[A-Z][a-z])", " ", unnumbered)
+    if unglued != unnumbered:
+        add(unglued)
     if " - " in title:
         add(title.replace(" - ", ": "))
         add(title.replace(" - ", " "))
+    # "White Knight Chronicles - International Edition" / "... Deluxe Edition": many
+    # services list the game under its plain name only.
+    plain = _EDITION.sub("", title)
+    if plain != title and len(plain) >= 3:
+        add(plain)
     trimmed = re.sub(rf"\s+{_ABBR}$", "", title)
     if trimmed != title:
         add(trimmed)
@@ -359,5 +375,5 @@ _ABBREVIATIONS = {
     "MDA": "Master Detective Archives", "DoA": "Dead or Alive", "AR": "Anniversary Remaster",
     "KH": "Kingdom Hearts", "SMT": "Shin Megami Tensei", "DQ": "Dragon Quest",
     "MGS": "Metal Gear Solid", "TLoH": "The Legend of Heroes", "DE": "Definitive Edition",
-    "GOTY": "Game of the Year Edition", "CE": "Complete Edition",
+    "GOTY": "Game of the Year Edition", "CE": "Complete Edition", "DX": "Deluxe",
 }

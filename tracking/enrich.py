@@ -97,6 +97,36 @@ def _save_poster(item_id: int, src_path: str | None = None, url: str | None = No
 _SEASON_SUFFIX = re.compile(r"(?i)\s+(?:season|s)\s*\d+$")
 
 
+def borrow_cover(conn: sqlite3.Connection, item_id: int) -> bool:
+    """Nothing found a cover: use the first season's, or the same title's from elsewhere
+    in your library (the Steam copy of a Switch game). Blank only when neither exists."""
+    return borrow_season_cover(conn, item_id) or borrow_title_cover(conn, item_id)
+
+
+def borrow_title_cover(conn: sqlite3.Connection, item_id: int) -> bool:
+    """ "GalGun 2" on Switch, with no cover found anywhere, shows the cover of the
+    "Gal*Gun 2" you own on Steam: same name once spacing and symbols are ignored."""
+    row = conn.execute("SELECT COALESCE(user_title, title) AS title, COALESCE(user_category, "
+                       "category) AS category, poster FROM items WHERE id=?", (item_id,)).fetchone()
+    if not row or row["poster"]:
+        return False
+    key = re.sub(r"[^a-z0-9]", "", titles.normalize(row["title"]))
+    if len(key) < 4:
+        return False
+    for cand in conn.execute(
+            "SELECT COALESCE(user_title, title) AS title, poster FROM items WHERE id!=? "
+            "AND poster IS NOT NULL AND COALESCE(user_category, category)=?", (item_id, row["category"])):
+        if re.sub(r"[^a-z0-9]", "", titles.normalize(cand["title"])) != key:
+            continue
+        src = paths.posters_dir() / cand["poster"]
+        if src.exists():
+            name = _save_poster(item_id, src_path=str(src))
+            conn.execute("UPDATE items SET poster=? WHERE id=?", (name, item_id))
+            log.info("no cover for %r: using %r's", row["title"], cand["title"])
+            return True
+    return False
+
+
 def borrow_season_cover(conn: sqlite3.Connection, item_id: int) -> bool:
     """A later season nothing has a cover for ("Agent AIKa Season 2": no service knows that
     name) shows the first season's cover instead of a blank card. A copy, so it survives
@@ -326,6 +356,6 @@ def enrich_item(conn: sqlite3.Connection, item_id: int, mount: str | None,
         conn.execute("UPDATE items SET poster=?, enriched_at=? WHERE id=?",
                      (poster, None if warnings else now, item.id))
     if not poster:
-        borrow_season_cover(conn, item.id)
+        borrow_cover(conn, item.id)
     conn.commit()
     return warnings

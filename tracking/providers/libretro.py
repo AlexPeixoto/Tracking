@@ -35,6 +35,10 @@ SYSTEMS = {
     "Intellivision": "Mattel - Intellivision", "Vectrex": "GCE - Vectrex",
     "Commodore 64": "Commodore - 64", "Amiga": "Commodore - Amiga", "MSX": "Microsoft - MSX",
 }
+# Collections mix these up (a "GB" folder full of Game Boy Color games): look in the
+# sibling's art too when the system's own has nothing.
+_SIBLINGS = {"Game Boy": "Game Boy Color", "Game Boy Color": "Game Boy",
+             "Master System": "Game Gear", "Game Gear": "Master System"}
 _REGION_PREF = ("USA", "World", "Europe", "Japan")
 _TAGS = re.compile(r"\s*\([^)]*\)|\s*\[[^\]]*\]")
 _limit = RateLimiter(1.0)
@@ -66,13 +70,18 @@ def _region_rank(name: str) -> int:
 
 
 def lookup(q: Query) -> Metadata | None:
-    system = SYSTEMS.get(q.platform or "")
+    found = _lookup(q.title, SYSTEMS.get(q.platform or ""))
+    sibling = _SIBLINGS.get(q.platform or "")
+    return found or (_lookup(q.title, SYSTEMS[sibling]) if sibling else None)
+
+
+def _lookup(title: str, system: str | None) -> Metadata | None:
     if not system:
         return None
     candidates = [n for n in names(system) if "(Beta" not in n and "(Proto" not in n and "(Demo" not in n]
     # Best region first, so equal title scores pick the USA release.
     candidates.sort(key=_region_rank)
-    best = best_match(q.title, None, candidates, names=lambda n: [base_title(n)],
+    best = best_match(title, None, candidates, names=lambda n: [base_title(n)],
                       bonus=lambda n: 2 - _region_rank(n) * 0.5)
     if not best:
         return None
