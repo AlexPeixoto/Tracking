@@ -8,9 +8,10 @@ from .log_viewer import LogDialog
 from .match import MatchDialog
 from .pick import PickDialog
 from .settings import SettingsDialog
+from .share import ShareDialog
 from .trackers import TrackersDialog
 from .want import WantDialog
 
 __all__ = ["AddLocationDialog", "AddSteamDialog", "CoverDialog", "HealthDialog", "LocationsDialog",
-           "LogDialog", "MatchDialog", "PickDialog", "RescanDialog", "SettingsDialog", "TrackersDialog",
-           "WantDialog"]
+           "LogDialog", "MatchDialog", "PickDialog", "RescanDialog", "SettingsDialog", "ShareDialog",
+           "TrackersDialog", "WantDialog"]

@@ -58,6 +58,7 @@ from .workers import (
     Job,
     LaunchJob,
     ScanJob,
+    ShareJob,
     TrackersExportJob,
     TransferJob,
 )
@@ -201,6 +202,7 @@ class MainWindow(QMainWindow):
         menu.addAction("Items shown now…", lambda: self.export_list(missing_only=False))
         menu.addSeparator()
         menu.addAction("For other trackers (MyAnimeList, Letterboxd)…", self.export_trackers)
+        menu.addAction("Share library (Android app)…", self.share_library)
         export.setMenu(menu)
         tb.addWidget(export)
         action("What should I play?", self.open_picker, "Ctrl+R")
@@ -1308,6 +1310,12 @@ class MainWindow(QMainWindow):
                 f"{result.need_metadata} imported items have no cover yet. Fetch covers and "
                 "scores for them now?") == QMessageBox.Yes:
             self.start_job(EnrichJob(only_pending=True))
+
+    def share_library(self) -> None:
+        dlg = dialogs.ShareDialog(self)
+        if dlg.exec():
+            self.start_job(ShareJob(dlg.dest, dlg.name.text(), dlg.covers.isChecked(),
+                                    dlg.wishlist.isChecked()))
 
     def export_trackers(self) -> None:
         dlg = dialogs.TrackersDialog(self)

@@ -303,6 +303,13 @@ logs\             tracking.log (level in Settings › General)
 - **Export / import** (Settings › General): one `.zip`, database only or with covers; API keys
   are left out unless you ask. Import replaces your library or merges into it (your edits win).
 - A `cover.jpg` / `folder.jpg` / `poster.jpg` in an item's folder is used as its cover.
+- **Share / Android app**: Export list… › *Share library (Android app)* writes a read-only
+  library package (titles, covers made small, scores, episodes, Completed, Planning; no file
+  paths, drive names, notes or keys). The **Tracking app for Android** (`android/`) opens it:
+  copy the file to the phone (USB, Google Drive, a chat) and open it with the app, or import it
+  from the app. It keeps several libraries (yours, a friend's) to switch between. Build it with
+  `android\gradlew.bat assembleDebug` or open `android/` in Android Studio. Format:
+  [docs/PACKAGE.md](docs/PACKAGE.md).
 
 ## What's next
 

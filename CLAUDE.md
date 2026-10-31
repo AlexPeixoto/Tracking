@@ -1,8 +1,12 @@
 # Tracking: notes for AI sessions
 
 A PySide6 desktop library for anime, movies, TV and games across drives, Android devices and
-Steam. Start with [docs/README.md](docs/README.md); the pages it lists describe the modules,
-the scanner and lookup rules (with their real examples), the data and the workflow.
+Steam, plus a read-only Android app (`android/`, Kotlin + Compose) that opens a shared library
+package (docs/PACKAGE.md). Change the package format in docs/PACKAGE.md, `tracking/package.py`
+and `android/.../data/Model.kt` together.
+
+Start with [docs/README.md](docs/README.md); the pages it lists describe the modules, the
+scanner and lookup rules (with their real examples), the data and the workflow.
 
 Before changing anything:
 

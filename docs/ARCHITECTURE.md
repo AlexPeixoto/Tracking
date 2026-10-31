@@ -22,6 +22,7 @@ and files → [DATA.md](DATA.md); how to work on the code safely → [WORKFLOW.m
 | `db.py` | Schema, migrations, `Item` / `Score` / `EpisodeRow` and the read queries |
 | `library.py` | Changes the *user* makes (edit, move, remove, complete). The UI calls these; it never writes SQL |
 | `archive.py` | Export / import of the library as a zip (replace or merge) |
+| `package.py` | The shareable library package for the Android app ([PACKAGE.md](PACKAGE.md)): items, small WebP covers, scores, episodes, Completed, Planning; nothing private |
 | `launcher.py` | Play: the command for an item (PC .exe, emulator + argument template, steam://), unzipping images to a cache, recording launches |
 | `transfer.py` | Copy / move an item's files to another folder or drive (verified before deleting), re-link or link the copy (`copy_of`), and keep `item_history` |
 | `exporters.py` | Your library in other trackers' formats: MyAnimeList XML (MAL ids via AniList), Letterboxd diary / watchlist CSV, one CSV of everything |
@@ -71,6 +72,9 @@ and files → [DATA.md](DATA.md); how to work on the code safely → [WORKFLOW.m
 | `ui/workers.py` | Background jobs (scan, enrich) on a thread pool, each with its own DB connection |
 | `ui/theme.py` | Dark theme, colours, app icon |
 | `packaging/` | PyInstaller spec, entry script, icon renderer (used by `build.ps1`) |
+| **Android** `android/` | |
+| `app/.../data/` | `Model.kt` (the package format, as Kotlin classes), `PackageStore.kt` (import a package into the app's storage, list / remove libraries) |
+| `app/.../ui/` | Compose screens: library grid with filters, item page, Completed by year, Planning; `LibraryViewModel.kt` holds the open library and filters |
 
 Rules of thumb:
 - **UI code never writes SQL.** User actions go through `library.py`, scans through `scan/store.py`, lookups through `enrich.py`, archives through `archive.py`.

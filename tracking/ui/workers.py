@@ -340,6 +340,27 @@ class TrackersExportJob(Job):
         return f"Exported to {self.folder}: {res.summary()}"
 
 
+class ShareJob(Job):
+    """Write a library package for the Android app (package.py)."""
+
+    def __init__(self, dest, name: str, covers: bool, wishlist: bool):
+        super().__init__()
+        self.dest, self.name, self.covers, self.wishlist = dest, name, covers, wishlist
+
+    def work(self, conn) -> str:
+        from .. import package
+
+        try:
+            m = package.export_package(self.dest, self.name, self.covers, self.wishlist,
+                                       progress=self.signals.progress.emit, cancelled=self.cancelled)
+        except InterruptedError:
+            self.dest.unlink(missing_ok=True)
+            return "Library package cancelled"
+        size = self.dest.stat().st_size / 2**20
+        c = m["counts"]
+        return f"Library package: {c['items']} items, {c['covers']} covers, {size:,.0f} MB -> {self.dest}"
+
+
 class BackupJob(Job):
     """Automatic backup, when it's due (or now, with ``force``)."""
 

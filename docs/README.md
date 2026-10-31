@@ -9,6 +9,7 @@ The user-facing guide is the [README](../README.md) at the top of the repository
 | [SCANNING.md](SCANNING.md) | understand or change *what* a scan finds: locations, games vs videos, collections, ROMs, seasons, extras, names |
 | [MATCHING.md](MATCHING.md) | understand or change how titles are looked up: services, search wording, matching, covers and their fallbacks |
 | [DATA.md](DATA.md) | know what is stored where: tables, settings keys, the data folder, migrations |
+| [PACKAGE.md](PACKAGE.md) | the shareable library package the Android app reads (format, what's left out) |
 | [WORKFLOW.md](WORKFLOW.md) | make a change safely: tests, the replay check on a real library, building, conventions and things not to do |
 | [WISHLIST.md](WISHLIST.md) | see what's done and what could come next |
 

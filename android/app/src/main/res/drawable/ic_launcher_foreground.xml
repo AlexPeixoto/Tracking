@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A stack of three covers, like the desktop app's icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#7B3FE4" android:pathData="M30,36h22a3,3 0 0,1 3,3v32a3,3 0 0,1 -3,3h-22a3,3 0 0,1 -3,-3v-32a3,3 0 0,1 3,-3z" />
+    <path android:fillColor="#1F9D74" android:pathData="M56,36h22a3,3 0 0,1 3,3v32a3,3 0 0,1 -3,3h-22a3,3 0 0,1 -3,-3v-32a3,3 0 0,1 3,-3z" />
+    <path android:fillColor="#5B8CFF" android:pathData="M42,30h24a3,3 0 0,1 3,3v40a3,3 0 0,1 -3,3h-24a3,3 0 0,1 -3,-3v-40a3,3 0 0,1 3,-3z" />
+</vector>
