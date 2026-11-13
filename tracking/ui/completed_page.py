@@ -345,7 +345,7 @@ class CompletedPage(QWidget):
                 menu.addAction("Open in library", lambda: self.open_item.emit(entry.item_id))
             menu.addAction("Choose cover image…", lambda: self.choose_cover(ids[0]))
             if entry and entry.category == "game":
-                menu.addAction("Search cover on IGDB…", lambda: self.search_cover(ids[0]))
+                menu.addAction("Search cover…", lambda: self.search_cover(ids[0]))
         menu.addAction("Look up cover again", lambda: self.fetch_covers.emit(ids))
         menu.addSeparator()
         menu.addAction("Remove", self.remove_selected)
@@ -428,7 +428,7 @@ class CompletedPage(QWidget):
         entry = next((c for c in self.entries if c.id == cid), None)
         if not entry:
             return
-        dlg = CoverDialog(entry.title, self)
+        dlg = CoverDialog(entry.title, self, entry.platform)
         if not dlg.exec() or not dlg.url:
             return
         QApplication.setOverrideCursor(Qt.WaitCursor)

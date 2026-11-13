@@ -131,24 +131,90 @@ def qt():
 def test_cover_dialog(conn, qt, monkeypatch):
     from tracking.ui.dialogs import CoverDialog
 
-    dlg = CoverDialog("Okami")                        # no keys: says how to get them
-    assert "Client ID" in dlg.status.text() and dlg.results.count() == 0
-
-    db.set_setting(conn, "igdb_client_id", "id")
-    db.set_setting(conn, "igdb_client_secret", "secret")
-    conn.commit()
     monkeypatch.setattr(CoverDialog, "_search", lambda self: None)
-    dlg = CoverDialog("Okami")
+    dlg = CoverDialog("Okami", platform="PS2")
+    assert dlg.platform == "PS2"
     dlg._no = 1
     found = [providers.Candidate("Okami", 2006, "PS2", "https://img/co1.jpg"),
              providers.Candidate("Okami HD", 2017, "Switch", "https://img/co2.jpg")]
-    dlg._show(1, "IGDB", found)
-    assert dlg.results.count() == 2 and "2 covers" in dlg.status.text()
+    dlg._show(1, "HowLongToBeat", found)
+    assert dlg.results.count() == 2 and "2 covers from HowLongToBeat" in dlg.status.text()
+    assert "IGDB Client ID" in dlg.status.text()      # no key: says IGDB would add more
     dlg._show(0, "IGDB", [])                           # an older search's answer is ignored
     assert dlg.results.count() == 2
     dlg.results.setCurrentRow(1)
     dlg._use()
     assert dlg.url == "https://img/co2.jpg"
+
+    db.set_setting(conn, "igdb_client_id", "id")
+    db.set_setting(conn, "igdb_client_secret", "secret")
+    conn.commit()
+    dlg = CoverDialog("Okami")
+    dlg._no = 1
+    dlg._show(1, "IGDB", found)
+    assert "IGDB Client ID" not in dlg.status.text()
+
+
+def _fake_cover_sources(monkeypatch, answers):
+    from tracking.providers import covers
+
+    monkeypatch.setattr(covers, "SOURCES", [
+        (label, lambda t, p, s, label=label: answers[label](p) if callable(answers[label]) else answers[label])
+        for label in answers])
+
+
+def test_cover_search_works_without_an_igdb_key(monkeypatch):
+    """Search cover… asked IGDB only, so without a key it found nothing although the scan
+    found covers (HowLongToBeat, Steam, libretro) without one."""
+    from tracking.providers import covers, igdb
+
+    monkeypatch.setattr(igdb, "search_covers", lambda *a, **k: pytest.fail("IGDB asked without a key"))
+    monkeypatch.setattr(covers.hltb, "search", lambda q: [
+        providers.Candidate("Gal*Gun 2", 2018, "HowLongToBeat · PC", "https://hltb/galgun2.jpg"),
+        providers.Candidate("Gal*Gun 2 DLC", None, "HowLongToBeat · PC", None)])     # no image: left out
+    monkeypatch.setattr(covers.steam, "search", lambda q: [
+        providers.Candidate("Gal*Gun 2", None, "Steam · PC", "tiny.jpg", None, 1),
+        providers.Candidate("Gal*Gun Returns", None, "Steam · PC", "tiny.jpg", None, 2)])
+    monkeypatch.setattr(covers.steam, "library_art", lambda appid: {1: "https://steam/1/600x900.jpg"}.get(appid))
+    label, found = covers.search("GalGun 2", "PC", {})
+    assert label == "HowLongToBeat + Steam"
+    assert [c.image_url for c in found] == ["https://hltb/galgun2.jpg", "https://steam/1/600x900.jpg"]
+
+    _, found = covers.search("GalGun 2", "Switch", {})                         # Steam is PC only
+    assert [c.image_url for c in found] == ["https://hltb/galgun2.jpg"]
+
+
+def test_cover_search_closest_name_first_and_survives_a_failing_service(monkeypatch):
+    from tracking.providers import covers
+
+    def down(_):
+        raise providers.ProviderError("down")
+
+    _fake_cover_sources(monkeypatch, {
+        "IGDB": down,
+        "HowLongToBeat": [providers.Candidate("Okami HD", None, "", "https://a"),
+                          providers.Candidate("Okami", None, "", "https://b")],
+        "Steam": [providers.Candidate("Okami", None, "", "https://b")],      # same image: once
+    })
+    label, found = covers.search("Okami", None, {})
+    assert label == "HowLongToBeat + Steam"
+    assert [c.image_url for c in found] == ["https://b", "https://a"]
+
+    _fake_cover_sources(monkeypatch, {"IGDB": down, "HowLongToBeat": down})
+    with pytest.raises(providers.ProviderError):
+        covers.search("Okami", None, {})
+
+
+def test_libretro_cover_search_uses_the_platform_set_and_its_sibling(monkeypatch):
+    from tracking.providers import libretro
+
+    sets = {"Nintendo - Game Boy": ["Tetris (World)", "Tetris (Japan)", "Kirby's Dream Land (USA)"],
+            "Nintendo - Game Boy Color": ["Tetris DX (World)"]}
+    monkeypatch.setattr(libretro, "names", lambda system: sets.get(system, []))
+    found = libretro.search_covers("Tetris", "Game Boy")
+    assert [c.title for c in found] == ["Tetris", "Tetris DX"]
+    assert found[0].image_url.endswith("Tetris%20%28World%29.png")       # best region, once
+    assert libretro.search_covers("Tetris", None) == []
 
 
 def test_on_platform_result_wins_over_exact_name():

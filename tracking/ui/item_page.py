@@ -110,7 +110,7 @@ class ItemPage(QScrollArea):
     deleted = Signal(int)
     play = Signal(int)
     find_match = Signal(int)         # search services by hand
-    search_cover = Signal(int)       # pick a cover on IGDB
+    search_cover = Signal(int)       # pick a cover by hand
     play_episode = Signal(int, object, object)  # item id, season, episode
 
     def __init__(self, parent=None):
@@ -156,9 +156,9 @@ class ItemPage(QScrollArea):
         match = QPushButton("Find match…")
         match.setToolTip("Wrong cover / scores, or nothing found? Search with any name and pick")
         match.clicked.connect(lambda: self.find_match.emit(self.item.id))
-        self.cover_btn = QPushButton("Search cover on IGDB…")
-        self.cover_btn.setToolTip("Pick the cover yourself from IGDB (every edition and port); "
-                                  "refetching keeps it")
+        self.cover_btn = QPushButton("Search cover…")
+        self.cover_btn.setToolTip("Pick the cover yourself (HowLongToBeat, Steam, libretro, "
+                                  "IGDB with a key); refetching keeps it")
         self.cover_btn.clicked.connect(lambda: self.search_cover.emit(self.item.id))
         delete = QPushButton("Remove from library")
         self.delete_btn = delete

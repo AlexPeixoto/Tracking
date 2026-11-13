@@ -58,12 +58,16 @@ and after; only the intended titles should change).
   that leaves no match they accept the other ("Kizumonogatari" stored as episodes 01–03 is
   three movies).
 - Find match (`ui/dialogs/match.py`) lets you search by hand and pin the item to a result.
+- **Add to library / Want to play search** (`providers.search`): asks every service for the
+  section that suits the chosen platform, merges the results and puts the closest title first
+  (Steam only answers for PC, so "Zelda Ocarina of Time" for Switch 2 comes from HowLongToBeat).
+  Changing the platform searches again.
 
 ## Covers
 
 In order:
 
-1. **A cover you picked** (Search cover on IGDB, `cover_pinned`) is never replaced by a
+1. **A cover you picked** (Search cover…, `cover_pinned`) is never replaced by a
    refetch; Find match unpins it.
 2. **Art next to the files** (`cover.jpg` / `folder.jpg` in the item's folder).
 3. **The best-ranked service** that returned one (`cover_rank`; libretro box art for consoles
@@ -76,6 +80,12 @@ In order:
    Borrowed covers are copies; a refetch that finds a real one replaces them.
 
 A refetch that finds nothing keeps the old cover: a service being down shouldn't blank items.
+
+**Search cover…** (`providers/covers.py`) offers covers for any typed name from the services
+the scan uses without keys (HowLongToBeat; Steam portrait art for PC; libretro box art on the
+game's platform set and its sibling, names at least `COVER_SEARCH_MIN_SIMILARITY` close) plus
+IGDB when its key is set, closest name first. It used to ask IGDB only, so without a key it
+found nothing.
 
 ## Known gaps (ideas, not done)
 

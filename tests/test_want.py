@@ -48,20 +48,38 @@ def test_scan_claims_wanted_item(tmp_path, conn):
     assert item.rel_path.endswith("Anime/Kill la Kill")
 
 
-def test_search_uses_first_service_that_can(monkeypatch):
-    calls = []
-    for name in ("omdb", "steam", "anilist", "tvmaze"):
-        mod = getattr(providers, name)
-        p = mod.PROVIDER
-        fake = type(p)(**{**p.__dict__, "search": lambda q, n=name: calls.append(n) or
-                          [providers.Candidate(f"{n} hit")]})
-        monkeypatch.setattr(mod, "PROVIDER", fake)
-        monkeypatch.setattr(providers, "REGISTRY",
-                            [fake if r.name == name else r for r in providers.REGISTRY])
-    for category, expected in (("game", "steam"), ("movie", "omdb"), ("anime", "anilist"),
-                               ("tv", "omdb")):
+def _fake_services(monkeypatch):
+    """Every service answers "<name> hit" without the network."""
+    fakes = [type(r)(**{**r.__dict__, "required": (),
+                        "search": lambda q, n=r.name: [providers.Candidate(f"{n} hit")]})
+             if r.search else r for r in providers.REGISTRY]
+    monkeypatch.setattr(providers, "REGISTRY", fakes)
+
+
+def test_search_asks_every_service_for_the_section(monkeypatch):
+    _fake_services(monkeypatch)
+    for category, expected in (("game", {"steam", "hltb"}), ("anime", {"anilist"}), ("movie", {"omdb"})):
         _, found = providers.search(providers.Query("x", category=category))
-        assert found[0].title == f"{expected} hit", category
+        assert expected <= {c.title.removesuffix(" hit") for c in found}, category
+
+
+def test_search_for_a_console_game_skips_steam(monkeypatch):
+    """Adding "Zelda Ocarina of Time" for Switch 2 searched only the Steam store."""
+    _fake_services(monkeypatch)
+    label, found = providers.search(providers.Query("x", category="game", platform="Switch 2"))
+    titles = {c.title for c in found}
+    assert "hltb hit" in titles and "steam hit" not in titles
+    assert "Steam" not in label
+
+
+def test_search_puts_the_closest_title_first(monkeypatch):
+    names = {"steam": "Zelda Breath of the Wild", "hltb": "The Legend of Zelda: Ocarina of Time"}
+    fakes = [type(r)(**{**r.__dict__, "required": (),
+                        "search": lambda q, n=r.name: [providers.Candidate(names.get(n, "Something Else"))]})
+             if r.search else r for r in providers.REGISTRY]
+    monkeypatch.setattr(providers, "REGISTRY", fakes)
+    _, found = providers.search(providers.Query("Zelda Ocarina of Time", category="game"))
+    assert found[0].title == "The Legend of Zelda: Ocarina of Time"
 
 
 def test_dialog_adds_selected_results(tmp_path, monkeypatch):

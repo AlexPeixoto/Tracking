@@ -422,11 +422,11 @@ class MainWindow(QMainWindow):
                 self.show_item(item_id)
 
     def search_cover(self, item_id: int):
-        """Pick a game's cover on IGDB; it's kept when metadata is fetched again."""
+        """Pick a game's cover by hand; it's kept when metadata is fetched again."""
         item = self._find(item_id)
         if not item:
             return
-        dlg = dialogs.CoverDialog(item.title, self)
+        dlg = dialogs.CoverDialog(item.title, self, item.platform)
         if not dlg.exec() or not dlg.url:
             return
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -1190,7 +1190,7 @@ class MainWindow(QMainWindow):
             menu.addAction("Open details", lambda: self.show_item(ids[0]))
             menu.addAction("Find match…", lambda: self.find_match(ids[0]))
             if items[0].category == "game":
-                menu.addAction("Search cover on IGDB…", lambda: self.search_cover(ids[0]))
+                menu.addAction("Search cover…", lambda: self.search_cover(ids[0]))
             menu.addAction("Open folder" if items[0].source == "disk" else "Open web page",
                            lambda: self.open_item(ids[0]))
             menu.addSeparator()

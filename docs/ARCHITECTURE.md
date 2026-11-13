@@ -60,7 +60,7 @@ and files → [DATA.md](DATA.md); how to work on the code safely → [WORKFLOW.m
 | `ui/grid.py` | Poster cards (score chips, average, badges) |
 | `ui/item_page.py` | Item page: completion, scores, time, episodes, summary, edits |
 | `ui/dialogs/want.py` | Search a title and add it to *Want to acquire*, or (`to_library`) straight to the library with platform and "Played on" |
-| `ui/dialogs/cover.py` | Search cover on IGDB: pick one of a game's covers; it's kept through refetches |
+| `ui/dialogs/cover.py` | Search cover: pick a game's cover from `providers/covers.py` (every service with covers); it's kept through refetches |
 | `ui/dialogs/match.py` | Find match: search every service (`providers.search_all`) and use a result as the item's search title (`library.use_match`) |
 | `ui/dialogs/pick.py` | What should I play? (`library.pick_candidates` / `library.pick`) |
 | `ui/dialogs/trackers.py` | Export for other trackers (formats + folder; runs as a job) |

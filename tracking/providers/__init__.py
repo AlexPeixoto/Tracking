@@ -59,13 +59,32 @@ def settings_for(category: str) -> list[Setting]:
 
 
 def search(q: Query, limit: int = 20) -> tuple[str, list[Candidate]]:
-    """Free-text search for the "Want to acquire" box: the first configured service
-    (registry order) for the category that can search. Returns (service, results)."""
-    # HowLongToBeat last: Steam's results carry store ids (artwork, play time) it lacks.
+    """Free-text search for the add / "Want to acquire" box: every configured service for the
+    category that can search, merged, best match first, one result per title. Returns
+    (services asked, results). With a platform, services that don't cover it aren't asked:
+    "Ocarina of Time" for Switch 2 goes to HowLongToBeat, not to the Steam store."""
+    from . import base
+
+    found: list[Candidate] = []
+    labels: list[str] = []
+    # Steam first: on equal matches its result wins, carrying a store id (artwork, play time).
     for p in sorted(for_query(q), key=lambda p: p.name == "hltb"):
-        if p.search and p.configured(q):
-            return p.label, p.search(q)[:limit]
-    return "", []
+        if not (p.search and p.configured(q)):
+            continue
+        try:
+            got = p.search(q)[:limit]
+        except Exception:  # one service down: the others still answer
+            continue
+        labels.append(p.label)
+        found += got
+    best: list[Candidate] = []
+    seen: set[str] = set()
+    for c in sorted(found, key=lambda c: -base.similarity(q.title, c.title)):  # stable
+        key = base.titles.normalize(c.title)
+        if key not in seen:
+            seen.add(key)
+            best.append(c)
+    return " + ".join(labels), best[:limit]
 
 
 def search_all(q: Query, limit: int = 12) -> list[Candidate]:

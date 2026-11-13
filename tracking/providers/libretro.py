@@ -11,7 +11,17 @@ import html
 import re
 from urllib.parse import quote, unquote
 
-from .base import Metadata, Provider, Query, RateLimiter, best_match, cached_json, session
+from .base import (
+    Candidate,
+    Metadata,
+    Provider,
+    Query,
+    RateLimiter,
+    best_match,
+    cached_json,
+    session,
+    similarity,
+)
 
 BASE = "https://thumbnails.libretro.com"
 SYSTEMS = {
@@ -43,6 +53,8 @@ _SIBLINGS = {"Game Boy": "Game Boy Color", "Game Boy Color": "Game Boy",
 _REGION_PREF = ("USA", "World", "Europe", "Japan")
 _TAGS = re.compile(r"\s*\([^)]*\)|\s*\[[^\]]*\]")
 _limit = RateLimiter(1.0)
+# Search cover…: how close a box art name must be to the typed name to be offered.
+COVER_SEARCH_MIN_SIMILARITY = 70
 
 
 def names(system: str) -> list[str]:
@@ -88,6 +100,29 @@ def _lookup(title: str, system: str | None) -> Metadata | None:
         return None
     url = f"{BASE}/{quote(system)}/Named_Boxarts/{quote(best + '.png')}"
     return Metadata(title=base_title(best), poster_url=url)
+
+
+def search_covers(title: str, platform: str | None, limit: int = 8) -> list[Candidate]:
+    """Search cover…: the box art whose name is close to ``title`` on that platform's set
+    (and its sibling set), closest first, one per name ("Ookami (USA)" over "Ookami (Japan)")."""
+    found: list[tuple[float, int, str, str]] = []
+    for plat in (platform, _SIBLINGS.get(platform or "")):
+        system = SYSTEMS.get(plat or "")
+        if not system:
+            continue
+        for n in names(system):
+            score = similarity(title, base_title(n))
+            if score >= COVER_SEARCH_MIN_SIMILARITY:
+                found.append((score, _region_rank(n), system, n))
+    out: list[Candidate] = []
+    seen: set[str] = set()
+    for _, _, system, n in sorted(found, key=lambda f: (-f[0], f[1])):
+        if base_title(n) in seen:
+            continue
+        seen.add(base_title(n))
+        out.append(Candidate(base_title(n), None, f"libretro · {system}",
+                             f"{BASE}/{quote(system)}/Named_Boxarts/{quote(n + '.png')}"))
+    return out[:limit]
 
 
 PROVIDER = Provider(

@@ -128,6 +128,8 @@ class WantDialog(QDialog):
         self.owned_row.setVisible(to_library)
         lay.addWidget(self.owned_row)
         self._toggle_platform()
+        # The platform decides which services are asked (Steam only knows PC games).
+        self.platform.currentIndexChanged.connect(self._search)
 
         buttons = QHBoxLayout()
         self.add_btn = QPushButton("Add selected")
@@ -168,7 +170,9 @@ class WantDialog(QDialog):
         self.status.setText(f"Searching for “{text}”…")
         with db.session() as conn:
             settings = db.all_settings(conn)
-        job = _Search(self._search_no, providers.Query(text, category=self.category, settings=settings))
+        platform = self.platform.currentData() if self.to_library else None
+        job = _Search(self._search_no, providers.Query(text, category=self.category, platform=platform,
+                                                       settings=settings))
         job.signals.results.connect(self._show_results)
         job.signals.failed.connect(self._show_error)
         job.signals.thumb.connect(self._show_thumb)

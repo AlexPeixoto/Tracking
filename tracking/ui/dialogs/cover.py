@@ -1,5 +1,6 @@
-"""Search cover…: look a game up on IGDB with any name and pick one of its covers
-(each edition / port has its own). The cover is downloaded by whoever opened this."""
+"""Search cover…: look a game up with any name and pick a cover, from every service that has
+covers (providers/covers.py; IGDB too when its key is set). The cover is downloaded by whoever
+opened this."""
 
 from __future__ import annotations
 
@@ -18,16 +19,17 @@ from PySide6.QtWidgets import (
 )
 
 from ... import db, providers
-from ...providers import igdb
+from ...providers import covers, igdb
 from .want import _Search
 
 COVER = QSize(132, 176)
 
 
 class CoverDialog(QDialog):
-    def __init__(self, title: str, parent=None):
+    def __init__(self, title: str, parent=None, platform: str | None = None):
         super().__init__(parent)
-        self.setWindowTitle(f"Search cover on IGDB · {title}")
+        self.setWindowTitle(f"Search cover · {title}")
+        self.platform = platform
         self.resize(820, 680)
         self.url: str | None = None  # the picked cover, once accepted
         self._no = 0
@@ -74,29 +76,25 @@ class CoverDialog(QDialog):
         buttons.addWidget(close)
         lay.addLayout(buttons)
 
-        if igdb.configured(self.settings):
-            self._search()
-        else:
-            go.setEnabled(False)
-            self.status.setText("IGDB needs a free Client ID and Secret: make a Twitch app at "
-                                "dev.twitch.tv/console/apps, then add both in Settings › Games.")
+        self._search()
 
     def _search(self) -> None:
         text = self.text.text().strip()
-        if len(text) < 2 or not igdb.configured(self.settings):
+        if len(text) < 2:
             return
         self._no += 1
         self.results.clear()
         self._found = []
-        self.status.setText("Searching IGDB…")
-        job = _Search(self._no, providers.Query(text, category="game", settings=self.settings),
-                      search=lambda q: ("IGDB", igdb.search_covers(q.title, self.settings)), size=COVER)
+        self.status.setText("Searching…")
+        job = _Search(self._no, providers.Query(text, category="game", platform=self.platform,
+                                                settings=self.settings),
+                      search=lambda q: covers.search(q.title, q.platform, self.settings), size=COVER)
         job.signals.results.connect(self._show)
         job.signals.failed.connect(lambda n, e: n == self._no and self.status.setText(f"Search failed: {e}"))
         job.signals.thumb.connect(self._thumb)
         QThreadPool.globalInstance().start(job)
 
-    def _show(self, number: int, _source: str, found: list) -> None:
+    def _show(self, number: int, source: str, found: list) -> None:
         if number != self._no:
             return
         self._found = found
@@ -108,8 +106,12 @@ class CoverDialog(QDialog):
             it.setToolTip(f"{c.title}{year}\n{c.detail}" if c.detail else f"{c.title}{year}")
             it.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
             self.results.addItem(it)
-        self.status.setText(f"{len(found)} covers. Double-click one to use it." if found else
-                            "Nothing found. Try the original or store name, or fewer words.")
+        text = (f"{len(found)} covers from {source}. Double-click one to use it." if found else
+                "Nothing found. Try the original or store name, or fewer words.")
+        if not igdb.configured(self.settings):
+            text += (" For more (a cover per edition and port), add a free IGDB Client ID and Secret "
+                     "in Settings › Games (a Twitch app from dev.twitch.tv/console/apps).")
+        self.status.setText(text)
 
     def _thumb(self, number: int, row: int, img: QImage) -> None:
         if number == self._no and row < self.results.count():

@@ -65,6 +65,8 @@ PLATFORMS: list[Platform] = [
     _P("Wii U", ("wiiu",), ("wiiu",), "Wii U"),
     _P("Switch", ("switch", "nintendoswitch", "sw", "nsw"), ("nintendoswitch",), "Nintendo Switch",
        "Nintendo Switch", "Nintendo Switch"),
+    _P("Switch 2", ("switch2", "nintendoswitch2", "ns2", "sw2"), ("nintendoswitch2",), "Nintendo Switch 2",
+       "Nintendo Switch 2", "Nintendo Switch 2"),
     _P("Game Boy", ("gb", "gameboy"), ("gameboy",), "Game Boy"),
     _P("Game Boy Color", ("gbc", "gameboycolor"), ("gbc",), "Game Boy Color"),
     _P("GBA", ("gba", "gameboyadvance"), ("gba", "gameboyadvance"), "Game Boy Advance",
