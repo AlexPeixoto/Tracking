@@ -1,4 +1,4 @@
-# Build dist\Tracking\Tracking.exe and run its self-test.
+# Build dist\Tracking.exe (one file) and run its self-test.
 #   powershell -ExecutionPolicy Bypass -File build.ps1
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
@@ -13,13 +13,15 @@ if (-not (Test-Path $py)) {
 
 $env:PYTHONPATH = $PSScriptRoot
 & $py packaging\make_icon.py build\tracking.ico
+# The old one-folder build (dist\Tracking\ with _internal\) is replaced by the single exe.
+if (Test-Path dist\Tracking) { Remove-Item -Recurse -Force dist\Tracking }
 & $py -m PyInstaller --noconfirm --clean --distpath dist --workpath build\pyinstaller packaging\Tracking.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
 # The exe has no console, so the self-test writes its report next to the log.
-$p = Start-Process dist\Tracking\Tracking.exe -ArgumentList "--selftest" -Wait -PassThru
+$p = Start-Process dist\Tracking.exe -ArgumentList "--selftest" -Wait -PassThru
 Get-Content "$env:LOCALAPPDATA\Tracking\logs\selftest.txt"
 if ($p.ExitCode -ne 0) { throw "Self-test failed (exit $($p.ExitCode))" }
 
-$size = (Get-ChildItem dist\Tracking -Recurse | Measure-Object Length -Sum).Sum / 1MB
-"Built dist\Tracking\Tracking.exe ({0:N0} MB folder)" -f $size
+$size = (Get-Item dist\Tracking.exe).Length / 1MB
+"Built dist\Tracking.exe ({0:N0} MB)" -f $size

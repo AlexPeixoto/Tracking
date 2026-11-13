@@ -121,13 +121,14 @@ with progress and hours left on every card.</sub></p>
 ## Getting started
 
 ```bat
-run.bat        :: starts dist\Tracking\Tracking.exe (builds it first if it's missing)
-build.bat      :: builds a fresh Tracking.exe and runs its self-test
+build.bat      :: builds dist\Tracking.exe and runs its self-test
 ```
 
+Then open `dist\Tracking.exe` (pin it to the taskbar or Start, or copy it anywhere).
 The build (PyInstaller, via `build.ps1` and `packaging\Tracking.spec`) creates the virtual
-environment on first use and bundles Python, Qt, MediaInfo and the parsing libraries into
-`dist\Tracking\` (~140 MB). Zip that folder to move it to another PC; no Python needed there.
+environment on first use and bundles Python, Qt, MediaInfo and the parsing libraries into that
+one file (~60 MB). Copy it to another PC as it is; no Python needed there. It unpacks itself
+to a temp folder when it starts, so opening it takes a couple of seconds.
 
 <details>
 <summary>Run from source instead</summary>

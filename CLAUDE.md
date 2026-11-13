@@ -22,7 +22,7 @@ Before changing anything:
 Owner's standing preferences:
 
 - Commit and push only when asked ("Commit and push to main").
-- The owner runs the built exe (`run.bat`); rebuild only via `build.bat`, never while it runs.
+- The owner runs the built exe (`dist\Tracking.exe`); rebuild only via `build.bat`, never while it runs.
 - README screenshots use the demo library only (no personal paths).
 - Don't use IMDb's internal GraphQL with spoofed headers.
 - The real library is at `%LOCALAPPDATA%\Tracking`; read it (or a copy), never write to it

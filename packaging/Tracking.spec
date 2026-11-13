@@ -1,5 +1,6 @@
 # PyInstaller spec for Tracking.exe. Build with build.ps1 (it makes the icon first).
-# One-folder build: starts fast; zip dist/Tracking to move it to another PC.
+# One-file build: a single dist/Tracking.exe to double-click, pin or copy to another PC.
+# It unpacks itself to a temp folder on each start (PyInstaller cleans it up on exit).
 
 from pathlib import Path
 
@@ -53,11 +54,11 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name="Tracking",
     icon=str(ROOT / "build" / "tracking.ico"),
     console=False,
     upx=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="Tracking", upx=False)

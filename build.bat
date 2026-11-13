@@ -1,5 +1,5 @@
 @echo off
-rem Build a fresh dist\Tracking\Tracking.exe (sets up .venv on first use) and self-test it.
+rem Build a fresh dist\Tracking.exe (sets up .venv on first use) and self-test it.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1"
 if errorlevel 1 (
     echo.

@@ -4,12 +4,11 @@
 
 | Command | What it does |
 |---|---|
-| `build.bat` | creates `.venv` on first use, installs `requirements.txt` (every build), builds `dist\Tracking\Tracking.exe` with PyInstaller and runs its self-test |
-| `run.bat` | starts the built exe (builds it first if missing) |
+| `build.bat` | creates `.venv` on first use, installs `requirements.txt` (every build), builds the single-file `dist\Tracking.exe` with PyInstaller and runs its self-test |
 | `check.bat` | lint (ruff), tests with coverage (`build\coverage\index.html`), and the replay of your library when you have a baseline |
 | `python -m tracking` | runs from source (inside `.venv`) |
 
-Don't rebuild while the app is running: the exe and its files are in use.
+Don't rebuild while the app is running: the exe is in use.
 
 ## The checks
 
